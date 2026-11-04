@@ -1,0 +1,10 @@
+# Built databases go to GitHub Releases, never into git
+*.db
+*.db.zst
+*.ndjson
+out/
+
+__pycache__/
+*.pyc
+
+CLAUDE.md
