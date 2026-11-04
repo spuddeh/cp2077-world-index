@@ -13,7 +13,7 @@
 
 // ---- CONFIG ----
 const GAME  = "2.5";        // the game version the loaded archives belong to; names the output folder
-const PART  = 0, PARTS = 1; // this run reads part PART of PARTS
+const PART  = 0, PARTS = 3;  // this run reads part PART of PARTS
 const CHUNK = 500;          // sectors per NDJSON file
 // ----------------
 

@@ -1,0 +1,183 @@
+"""Build core.db and full.db for one game version from the extract's NDJSON.
+
+    python build/build.py --game 2.5 --src <dump>/wscript/raw/world-index/2.5 --out out/2.5
+
+Both databases have the same schema (build/schema.sql). A placement row goes to full.db when its node type is
+visual or physical data (meshes, decals, lights, foliage, water, collision, ...) and to core.db otherwise. Node
+references and outlines follow their node's database.
+"""
+import argparse
+import datetime
+import glob
+import json
+import math
+import os
+import re
+import sqlite3
+import subprocess
+
+SCHEMA_VERSION = 1
+HERE = os.path.dirname(os.path.abspath(__file__))
+
+# A type whose name matches goes to full.db. Matched against the entry type when the row is a cooked entry.
+FULL = re.compile(r"Mesh|Decal|Foliage|Water|Acoustic|Collision|Light|Particle|Occluder|Terrain|GINode|GISpace"
+                  r"|Reflection|Effect|Destruction|Rotating|Advertisement|Cable|Fog|Clouds|Wind|Weather")
+
+
+class Db:
+    def __init__(self, path):
+        if os.path.exists(path):
+            os.remove(path)
+        self.con = sqlite3.connect(path)
+        self.con.execute("PRAGMA journal_mode = OFF")
+        self.con.execute("PRAGMA synchronous = OFF")
+        with open(os.path.join(HERE, "schema.sql"), encoding="utf-8") as f:
+            self.con.executescript(f.read())
+        self.strings = {}
+        self.sectors = set()
+        self.nodes = []
+        self.refs = []
+        self.outlines = []
+        self.next_id = 1
+
+    def s(self, text):
+        if text is None:
+            return None
+        sid = self.strings.get(text)
+        if sid is None:
+            sid = len(self.strings) + 1
+            self.strings[text] = sid
+        return sid
+
+    def flush(self):
+        c = self.con
+        c.executemany("INSERT INTO nodes VALUES (" + ",".join("?" * 26) + ")", self.nodes)
+        c.executemany("INSERT INTO node_refs VALUES (?,?,?,?,?)", self.refs)
+        c.executemany("INSERT INTO outlines VALUES (?,?,?,?)", self.outlines)
+        self.nodes, self.refs, self.outlines = [], [], []
+
+
+def yaw_degrees(qi, qj, qk, qr):
+    return math.degrees(math.atan2(2 * (qr * qk + qi * qj), 1 - 2 * (qj * qj + qk * qk)))
+
+
+def rotate(q, v):
+    qi, qj, qk, qr = q
+    x, y, z = v
+    # v' = v + 2r(u x v) + 2(u x (u x v)), u = (qi, qj, qk)
+    cx, cy, cz = qj * z - qk * y, qk * x - qi * z, qi * y - qj * x
+    dx, dy, dz = qj * cz - qk * cy, qk * cx - qi * cz, qi * cy - qj * cx
+    return (x + 2 * (qr * cx + dx), y + 2 * (qr * cy + dy), z + 2 * (qr * cz + dz))
+
+
+def signed64(text):
+    if text is None:
+        return None
+    v = int(text)
+    return v - (1 << 64) if v >= (1 << 63) else v
+
+
+def variant_of(row, starts):
+    k = 0
+    for i, start in enumerate(starts):
+        if row >= start:
+            k = i
+    return k
+
+
+def git_commit():
+    try:
+        return subprocess.check_output(["git", "-C", HERE, "rev-parse", "--short", "HEAD"], text=True).strip()
+    except (OSError, subprocess.CalledProcessError):
+        return None
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--game", required=True)
+    ap.add_argument("--src", required=True)
+    ap.add_argument("--out", required=True)
+    a = ap.parse_args()
+    os.makedirs(a.out, exist_ok=True)
+    core, full = Db(os.path.join(a.out, "core.db")), Db(os.path.join(a.out, "full.db"))
+
+    with open(os.path.join(a.src, "sectors.json"), encoding="utf-8") as f:
+        descriptors = {d["path"]: d for d in json.load(f)}
+    sector_ids = {path: i + 1 for i, path in enumerate(sorted(descriptors))}
+
+    parts = sorted(glob.glob(os.path.join(a.src, "part-*.ndjson")))
+    read = set()
+    for part in parts:
+        with open(part, encoding="utf-8") as f:
+            for line in f:
+                if not line.strip():
+                    continue
+                s = json.loads(line)
+                path = s["path"]
+                sid = sector_ids[path]
+                read.add(path)
+                nodes = {n["i"]: n for n in s["nodes"]}
+                starts = s.get("variantIndices") or []
+                placed_in = {}   # node index -> (db, first placement id, row)
+                for r in s["rows"]:
+                    (row, idx, inst, entry, gid, x, y, z, qi, qj, qk, qr, sx, sy, sz, res, app, dist) = r
+                    node = nodes.get(idx, {})
+                    ntype = node.get("t", "?")
+                    db = full if FULL.search(entry or ntype) else core
+                    db.sectors.add(sid)
+                    pid = db.next_id
+                    db.next_id += 1
+                    db.nodes.append((pid, sid, idx, row, inst if inst >= 0 else None, db.s(ntype), db.s(entry),
+                                     signed64(gid), x, y, z, qi, qj, qk, qr, sx, sy, sz,
+                                     round(yaw_degrees(qi, qj, qk, qr), 2),
+                                     db.s(res), db.s(app), db.s(node.get("tpl")), db.s(node.get("app")),
+                                     db.s(node.get("d")), variant_of(row, starts), round(dist, 2)))
+                    if idx not in placed_in:
+                        placed_in[idx] = (db, pid)
+                    ol = node.get("outline")
+                    if ol:
+                        pts = [rotate((qi, qj, qk, qr), (p[0] * sx, p[1] * sy, p[2] * sz)) for p in ol["p"]]
+                        pts = [[round(x + px, 3), round(y + py, 3), round(z + pz, 3)] for px, py, pz in pts]
+                        db.outlines.append((pid, ol["h"] * sz, json.dumps(pts, separators=(",", ":")),
+                                            json.dumps(ol["p"], separators=(",", ":"))))
+                for idx, (db, pid) in placed_in.items():
+                    for kind, at, value in nodes.get(idx, {}).get("refs", []):
+                        db.refs.append((sid, idx, kind, db.s(re.sub(r"\[\d+\]", "[]", at)), db.s(value)))
+                for db in (core, full):
+                    if len(db.nodes) > 200000:
+                        db.flush()
+        print(f"{os.path.basename(part)}: core {core.next_id - 1:,} full {full.next_id - 1:,}", flush=True)
+
+    meta = {"game_version": a.game, "schema_version": str(SCHEMA_VERSION),
+            "built_utc": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "build_commit": git_commit() or "", "sectors_read": str(len(read)),
+            "sectors_listed": str(len(descriptors))}
+    for name, db in (("core", core), ("full", full)):
+        db.flush()
+        c = db.con
+        c.executemany("INSERT INTO strings VALUES (?,?)", ((i, t) for t, i in db.strings.items()))
+        for path, d in descriptors.items():
+            sid = sector_ids[path]
+            if sid not in db.sectors:
+                continue
+            lo, hi = d.get("min") or [None] * 3, d.get("max") or [None] * 3
+            c.execute("INSERT INTO sectors VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+                      (sid, db.s(path), d["category"], d["level"], db.s(d.get("prefab")),
+                       *lo, *hi, json.dumps(d.get("variants") or [], separators=(",", ":"))))
+        # Strings added while writing sectors.
+        c.executemany("INSERT OR IGNORE INTO strings VALUES (?,?)", ((i, t) for t, i in db.strings.items()))
+        c.executemany("INSERT INTO meta VALUES (?,?)", list(meta.items()) + [("database", name)])
+        c.execute("INSERT INTO nodes_rtree SELECT id, x, x, y, y, z, z FROM nodes")
+        with open(os.path.join(HERE, "indexes.sql"), encoding="utf-8") as f:
+            c.executescript(f.read())
+        c.commit()
+        c.execute("VACUUM")
+        c.close()
+        size = os.path.getsize(os.path.join(a.out, name + ".db"))
+        print(f"{name}.db: {db.next_id - 1:,} placements, {size / 1e6:,.0f} MB")
+    missing = sorted(set(descriptors) - read)
+    print(f"sectors read {len(read):,} of {len(descriptors):,}; not read: {missing[:10]}")
+
+
+if __name__ == "__main__":
+    main()
