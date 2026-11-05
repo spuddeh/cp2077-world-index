@@ -20,9 +20,9 @@
 // Run it in the host with a 30-minute timeout.
 
 // ---- CONFIG ----
-const GAME  = "2.31";        // the game version the loaded archives belong to; names the output folder
-const FROM  = 36, TO = 52;    // the first and last part-<NN> file this run writes
-const ONLY  = "foliage";         // "extra": the main menu and unlisted sectors, into part-extra-<NN>.ndjson;
+const GAME  = "2.5";        // the game version the loaded archives belong to; names the output folder
+const FROM  = 0, TO = 25;    // the first and last part-<NN> file this run writes
+const ONLY  = null;         // "extra": the main menu and unlisted sectors, into part-extra-<NN>.ndjson;
                             // "foliage": every sector's foliage plants, into foliage-<NN>.ndjson
 const CHUNK = 500;          // sectors per NDJSON file
 // ----------------
