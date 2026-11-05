@@ -16,7 +16,7 @@ import re
 import sqlite3
 import subprocess
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 ARRAY_INDEX = re.compile(r"\[(\d+)\]")
 HERE = os.path.dirname(os.path.abspath(__file__))
 
@@ -112,6 +112,10 @@ def main():
 
     parts = sorted(glob.glob(os.path.join(a.src, "part-*.ndjson")))
     read = set()
+    # What a read could not carry through, summed over the world, and each accepted parsing error by sector.
+    audit = {"nodes": 0, "rows": 0, "rowsNoNode": 0, "emptyChunks": 0, "walkCut": 0, "walkErrors": 0, "outlineBad": 0,
+             "instanceSplit": 0, "occluderShear": 0, "occluderNonFinite": 0, "occluderUnread": 0, "occluderMismatch": 0}
+    read_errors, analyze_errors, unplaced = {}, {}, {}
     for part in parts:
         with open(part, encoding="utf-8") as f:
             for line in f:
@@ -121,27 +125,30 @@ def main():
                 path = s["path"]
                 sid = sector_ids[path]
                 read.add(path)
+                for key in audit:
+                    audit[key] += s["audit"][key]
+                if s["audit"]["readErrors"]:
+                    read_errors[path] = s["audit"]["readErrors"]
+                if s["audit"].get("analyzeError"):
+                    analyze_errors[path] = s["audit"]["analyzeError"]
+                for n in s["nodes"]:
+                    if n.get("u"):
+                        unplaced[n["t"]] = unplaced.get(n["t"], 0) + 1
                 nodes = {n["i"]: n for n in s["nodes"]}
                 starts = s.get("variantIndices") or []
                 placed_in = {}   # node index -> (db, first placement id, row)
                 for r in s["rows"]:
-                    (row, idx, inst, entry, gid, x, y, z, qi, qj, qk, qr, sx, sy, sz, res, app, dist, instances) = r
+                    (row, idx, inst, entry, gid, x, y, z, qi, qj, qk, qr, sx, sy, sz, res, app, dist, instances, _) = r
                     node = nodes.get(idx, {})
                     ntype = node.get("t", "?")
                     db = full if FULL.search(entry or ntype) else core
-                    if instances is not None:
-                        # An instanced mesh or destructible: one placement per instance, at its own transform. A row
-                        # whose instances an earlier row of the same node already listed ([]) adds none.
+                    if instances:
+                        # An instanced mesh, destructible or occluder: one placement per instance, at its own transform.
                         transforms = [(t, k, "instance") for k, t in enumerate(instances)]
-                    elif node.get("b") and x == 0 and y == 0 and z == 0:
-                        # A node stored at the origin with world bounds (an instanced occluder): the bounds' centre,
-                        # or no position when the bounds are empty (min above max), which they are in 2.31 and 2.5.
-                        b = node["b"]
-                        if b[0] <= b[3] and b[1] <= b[4] and b[2] <= b[5]:
-                            centre = ((b[0] + b[3]) / 2, (b[1] + b[4]) / 2, (b[2] + b[5]) / 2)
-                            transforms = [((*centre, qi, qj, qk, qr, sx, sy, sz), None, "bounds")]
-                        else:
-                            transforms = [((None, None, None, qi, qj, qk, qr, sx, sy, sz), None, "none")]
+                    elif instances is not None:
+                        # A further row of an instanced mesh or occluder, at the origin. Its copies are on the first
+                        # row of the node or group; it keeps a placement so its row number can be looked up.
+                        transforms = [((None, None, None, qi, qj, qk, qr, sx, sy, sz), None, "none")]
                     else:
                         transforms = [((x, y, z, qi, qj, qk, qr, sx, sy, sz), None, "row")]
                     if not transforms:
@@ -209,7 +216,12 @@ def main():
     elif os.path.exists(foliage_path):
         os.remove(foliage_path)   # a foliage.db from an earlier build would not match this one
 
-    meta = {"game_version": a.game, "schema_version": str(SCHEMA_VERSION),
+    print("audit", json.dumps(audit), flush=True)
+    print("nodes no row places", json.dumps(unplaced, sort_keys=True), flush=True)
+    print("accepted while reading", json.dumps(read_errors, indent=1), flush=True)
+    print("instance decode errors", json.dumps(analyze_errors), flush=True)
+    meta = {"game_version": a.game, "schema_version": str(SCHEMA_VERSION), "audit": json.dumps(audit),
+            "nodes_no_row_places": json.dumps(unplaced, sort_keys=True), "read_errors": json.dumps(read_errors),
             "built_utc": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
             "build_commit": git_commit() or "", "sectors_read": str(len(read)),
             "sectors_listed": str(len(descriptors))}

@@ -72,6 +72,16 @@ for (const f of wkit.GetArchiveFiles()) {
 }
 descriptors.sort(function (a, b) { return a.path < b.path ? -1 : a.path > b.path ? 1 : 0; });
 if ((FROM === 0 && ONLY !== "foliage") || ONLY === "extra") { wkit.SaveToRaw(OUT + "sectors.json", JSON.stringify(descriptors)); }
+// Every sector read must be the game's own copy. A mod archive that wins a path would put the mod's edit in the index.
+const byPath = new Map();
+for (const f of wkit.GetArchiveFiles()) {
+    const path = f.FileName ?? f.Name;
+    if (path && path.endsWith(".streamingsector")) { byPath.set(path, f); }
+}
+const notVanilla = descriptors.filter(function (d) { return !byPath.has(d.path) || !vanilla(byPath.get(d.path)); });
+if (notVanilla.length > 0) {
+    throw new Error(notVanilla.length + " sectors are not served by the game's own archives, first " + notVanilla[0].path);
+}
 logger.Info("sectors " + descriptors.length + ": " + descriptors.filter(function (d) { return d.block === null; }).length
     + " listed by no block; " + modded + " sector paths served only by mod archives were left out");
 
@@ -85,6 +95,7 @@ logger.Info(ONLY === "extra" ? "extra: " + todo.length + " sectors"
       + "; the last file is " + pad(Math.ceil(descriptors.length / CHUNK) - 1));
 
 let errors = [], unreadable = 0;
+const total = { rows: 0, stances: 0, written: 0 };
 let lines = [], chunk = ONLY === "extra" ? 0 : FROM, rows = 0;
 const prefix = ONLY === "extra" ? "part-extra-" : ONLY === "foliage" ? "foliage-" : "part-";
 const errPrefix = ONLY === "extra" ? "errors-extra-" : ONLY === "foliage" ? "errors-foliage-" : "errors-";
@@ -99,6 +110,9 @@ for (let k = first; k < last; k++) {
         errors.push({ path: path, error: parsed.error || "not in the loaded archives" });
     } else if (ONLY !== "foliage" || parsed.rows.length > 0) {
         rows += parsed.rows.length;
+        total.rows += parsed.audit.rows ?? 0;
+        total.stances += parsed.audit.stances ?? 0;
+        total.written += parsed.audit.written ?? 0;
         lines.push(text);
     }
     if ((k + 1) % CHUNK === 0 || k === last - 1) {
@@ -113,4 +127,4 @@ for (let k = first; k < last; k++) {
     }
 }
 logger.Info("DONE files " + pad(FROM) + ".." + pad(chunk - 1) + ": " + (last - first - unreadable) + " sectors, " + rows
-    + " rows, " + unreadable + " unreadable, " + Math.round((Date.now() - started) / 1000) + " s");
+    + " rows, " + unreadable + " unreadable, " + Math.round((Date.now() - started) / 1000) + " s; " + JSON.stringify(total));
