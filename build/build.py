@@ -87,8 +87,12 @@ def variant_of(row, starts):
 
 
 def git_commit():
+    """HEAD of this repo, with -dirty when build/ or extract/ has uncommitted changes."""
     try:
-        return subprocess.check_output(["git", "-C", HERE, "rev-parse", "--short", "HEAD"], text=True).strip()
+        head = subprocess.check_output(["git", "-C", HERE, "rev-parse", "--short", "HEAD"], text=True).strip()
+        dirty = subprocess.check_output(["git", "-C", HERE, "status", "--porcelain", "--", "../build", "../extract"],
+                                        text=True).strip()
+        return head + ("-dirty" if dirty else "")
     except (OSError, subprocess.CalledProcessError):
         return None
 
