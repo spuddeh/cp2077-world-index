@@ -35,6 +35,9 @@ Each game version is one GitHub Release holding two databases with the same sche
 `core.db` answers most questions alone. Open `full.db` beside it with `ATTACH` when a query needs a mesh
 node. A separate Release holds the differences between two game versions.
 
+Any SQLite client reads them, with no other tool needed. [SCHEMA.md](SCHEMA.md) describes every table and
+column and has example queries.
+
 ## What this contains, and whose it is
 
 The world data is Cyberpunk 2077's, so it belongs to CD PROJEKT RED. This repository is an extraction of
