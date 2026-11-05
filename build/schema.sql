@@ -19,8 +19,9 @@ CREATE TABLE sectors (
 -- derived from it; sx, sy, sz the scale. variant is the sector variant range the row sits in (0 = always on).
 -- An instanced mesh or destructible has one row per instance: instance_no numbers them within the node (or 2.5
 -- group), and the transform is that instance's. position_source says where the transform comes from: row (the
--- node-data row), instance (the node's own instance transforms) or bounds (the centre of the node's world bounds,
--- for an instanced occluder, whose instances are not decoded).
+-- node-data row), instance (the node's own instance transforms), bounds (the centre of the node's world bounds) or
+-- none: x, y, z are NULL because the files give no position (an instanced occluder, whose instances are not
+-- decoded and whose world bounds are empty).
 CREATE TABLE nodes (
     id INTEGER PRIMARY KEY, sector_id INTEGER, node_idx INTEGER, row_idx INTEGER, instance_index INTEGER,
     type_id INTEGER, entry_type_id INTEGER, global_id INTEGER,

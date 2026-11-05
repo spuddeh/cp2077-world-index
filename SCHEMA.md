@@ -40,7 +40,9 @@ One row per streaming sector that has a placement in this database.
 
 ### `nodes`
 
-One row per placement: a row of a sector's node data.
+One row per placement. Most placements are a row of a sector's node data. An instanced mesh or destructible holds
+many copies of one mesh: it has one row here per copy, all with the same `node_idx` and `row_idx`, numbered by
+`instance_no`.
 
 | Column | |
 | --- | --- |
@@ -60,6 +62,12 @@ One row per placement: a row of a sector's node data.
 | `debug_id` | the node's debug name |
 | `variant` | the sector variant range the row sits in; 0 is always on |
 | `streaming_distance` | metres |
+| `instance_no` | the copy's number within its instanced node (or 2.5 group); NULL for anything else |
+| `position_source` | `row` (the node-data row), `instance` (the instanced node's own copy transforms), `bounds` (the centre of the node's world bounds) or `none` (no position in the files: `x`, `y`, `z` are NULL) |
+
+A 2.5 instanced mesh group's own node-data row sits at the origin; its copies' real positions are what the
+`instance` rows hold. Instanced occluders (about 12,000 per version) are `none`: their copies are not decoded and
+their world bounds are empty.
 
 `global_id` is an unsigned 64-bit hash stored as a signed 64-bit integer, because SQLite integers are signed.
 To look one up from its unsigned form, subtract 2^64 when it is 2^63 or more; do it before the value reaches
@@ -211,6 +219,7 @@ One row per pair, or per placement with no counterpart.
 | `old_node_idx`, `new_node_idx` | the node index in each version |
 | `old_row`, `new_row` | the node-data row in each version |
 | `old_instance`, `new_instance` | a cooked entry's index within its node; NULL otherwise |
+| `old_instance_no`, `new_instance_no` | a copy's number within an instanced node; NULL otherwise |
 | `old_global_id`, `new_global_id` | the global node id in each version, signed as in `nodes` |
 | `old_x` .. `new_z` | position in each version, metres |
 | `distance` | metres between the two positions; NULL when one side is missing |

@@ -134,10 +134,14 @@ def main():
                         # whose instances an earlier row of the same node already listed ([]) adds none.
                         transforms = [(t, k, "instance") for k, t in enumerate(instances)]
                     elif node.get("b") and x == 0 and y == 0 and z == 0:
-                        # A node stored at the origin with world bounds (an instanced occluder): the bounds' centre.
+                        # A node stored at the origin with world bounds (an instanced occluder): the bounds' centre,
+                        # or no position when the bounds are empty (min above max), which they are in 2.31 and 2.5.
                         b = node["b"]
-                        centre = ((b[0] + b[3]) / 2, (b[1] + b[4]) / 2, (b[2] + b[5]) / 2)
-                        transforms = [((*centre, qi, qj, qk, qr, sx, sy, sz), None, "bounds")]
+                        if b[0] <= b[3] and b[1] <= b[4] and b[2] <= b[5]:
+                            centre = ((b[0] + b[3]) / 2, (b[1] + b[4]) / 2, (b[2] + b[5]) / 2)
+                            transforms = [((*centre, qi, qj, qk, qr, sx, sy, sz), None, "bounds")]
+                        else:
+                            transforms = [((None, None, None, qi, qj, qk, qr, sx, sy, sz), None, "none")]
                     else:
                         transforms = [((x, y, z, qi, qj, qk, qr, sx, sy, sz), None, "row")]
                     if not transforms:

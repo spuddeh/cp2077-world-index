@@ -64,7 +64,8 @@ CREATE INDEX placements_new ON placements (sector_id, new_node_idx) WHERE new_no
 """
 
 READ = """
-SELECT sp.text, coalesce(et.text, t.text), coalesce(r.text, tp.text), n.node_idx, n.row_idx, n.instance_index, n.instance_no, n.global_id, n.x, n.y, n.z
+SELECT sp.text, coalesce(et.text, t.text), coalesce(r.text, tp.text), n.node_idx, n.row_idx, n.instance_index, n.instance_no, n.global_id,
+       coalesce(n.x, 0), coalesce(n.y, 0), coalesce(n.z, 0)
 FROM {s}.nodes n
 JOIN {s}.sectors sc ON sc.id = n.sector_id JOIN {s}.strings sp ON sp.id = sc.path_id
 LEFT JOIN {s}.strings t ON t.id = n.type_id LEFT JOIN {s}.strings et ON et.id = n.entry_type_id
