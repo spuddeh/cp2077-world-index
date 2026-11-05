@@ -1,10 +1,10 @@
-"""Build core.db and full.db for one game version from the extract's NDJSON.
+"""Build core.db, full.db and the optional foliage.db for one game version from the extract's NDJSON.
 
     python build/build.py --game 2.5 --src <dump>/wscript/raw/world-index/2.5 --out out/2.5
 
-Both databases have the same schema (build/schema.sql). A placement row goes to full.db when its node type is
+All three have the same schema (build/schema.sql). A placement row goes to full.db when its node type is
 visual or physical data (meshes, decals, lights, foliage, water, collision, ...) and to core.db otherwise. Node
-references and outlines follow their node's database.
+references and outlines follow their node's database. foliage.db holds one row per plant, from foliage-*.ndjson.
 """
 import argparse
 import datetime

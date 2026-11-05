@@ -1,6 +1,6 @@
 """The differences between two game versions' world indexes, as diff-<a>-<b>.db.
 
-    python build/diff.py --old out/2.31 --new out/2.5 --out out/diff-2.31-2.5
+    python build/diff.py --old out/2.31 --new out/2.5 --out out
 
 Placements are matched within each sector path on (class, mesh or template). A cooked 2.5 entry counts as the
 2.31 class it stands for, so a 2.31 worldStaticMeshNode meets the 2.5 entry that replaced it. Node indexes are not

@@ -8,10 +8,10 @@ encoding to undo.
 and every other node that is not visual or physical. `full.db` holds meshes, decals, lights, foliage, water,
 collision and the like. Each placement is in exactly one of them. `foliage.db` holds the plants of the foliage
 nodes in `full.db`: one row per plant, `type` `worldFoliageNode`, with the node's mesh, `node_idx` and `row_idx`,
-`instance_no` the plant's number and `position_source` `instance`. It is about 10.3 million rows per version,
-1.7 GB raw and 523 MB under zstd. Plant scale is stored as the game has it, and a few thousand plants are below
-0.001. The 95 foliage nodes of `exterior_0_0_0_0` have no plants, so they are in `full.db` only. Open the others
-with `ATTACH`:
+`instance_no` the plant's number and `position_source` `instance`. It has no `global_id`, `debug_id` or
+`streaming_distance`, and its `node_refs` and `outlines` tables are empty. Plant scale is stored as the game has it,
+and a few thousand plants are below 0.001. The 95 foliage nodes of `exterior_0_0_0_0` have no plants, so they are
+in `full.db` only. Open the others with `ATTACH`:
 
 ```sql
 ATTACH 'full.db' AS full;
@@ -28,16 +28,17 @@ ATTACH 'foliage.db' AS foliage;
 ### `strings`
 
 `id`, `text`. Every path, class name, appearance and debug name is stored once here; a column ending in `_id`
-holds its `id`. Each database has its own `strings`, so ids do not match between `core.db` and `full.db`.
+holds its `id`. Each database has its own `strings`, so ids do not match between databases.
 
 ### `sectors`
 
 One row per streaming sector that has a placement in this database. Every `.streamingsector` in the game's
-archives is read: the three worlds' streaming blocks list all but a few, and those few are kept with `block` NULL.
+archives is read, apart from the ones under [Known gaps](#known-gaps): the three worlds' streaming blocks list all
+but a few, and those few are kept with `block` NULL.
 
 | Column | |
 | --- | --- |
-| `id` | sector id, the same in both databases |
+| `id` | sector id, the same in every database of a version |
 | `path_id` | the `.streamingsector` path |
 | `world` | the world it belongs to: `03_night_city` (with Phantom Liberty) or `04_main_menu`, the main menu's backdrop, whose positions are not Night City's |
 | `block` | the streaming block that lists it: `night_city`, `ep1` (Phantom Liberty) or `main_menu`; NULL for a sector no block lists, which the game never streams |
@@ -187,11 +188,37 @@ WHERE sector IN (SELECT sp.text FROM full.sectors_rtree t
 GROUP BY kind ORDER BY 2 DESC;
 ```
 
+The plants within 50 m of a point (`foliage.db`):
+
+```sql
+SELECT p.resource, p.x, p.y, p.z, p.instance_no
+FROM foliage.placements p
+WHERE p.sector IN (SELECT sp.text FROM foliage.sectors_rtree t
+                   JOIN foliage.sectors s ON s.id = t.id JOIN foliage.strings sp ON sp.id = s.path_id
+                   WHERE t.min_x < -1000 AND t.max_x > -1000 AND t.min_y < 2500 AND t.max_y > 2500)
+  AND abs(p.x + 1000) < 50 AND abs(p.y - 2500) < 50;
+```
+
+How many plants of one mesh there are:
+
+```sql
+SELECT count(*)
+FROM foliage.nodes
+WHERE resource_id = (SELECT id FROM foliage.strings WHERE text LIKE '%atriplex_low.mesh');
+```
+
+## Known gaps
+
+- **Unread sectors.** Three sectors cannot be read in either version, and one more in 2.31. Nothing from them is in
+  the index, so `meta` has `sectors_read` below `sectors_listed`:
+  `exterior_-17_21_0_0`, `exterior_-21_-1_0_0`, `exterior_-23_1_4_0`, and in 2.31 `ep1\exterior_-40_-38_0_0`.
+- **Instanced occluders.** About 12,000 per version have `position_source` `none` and NULL `x`, `y`, `z`.
+
 # The diff between two versions
 
 `diff-<old>-<new>.db` (e.g. `diff-2.31-2.5.db`) pairs every placement of one game version with its counterpart in
 the next. It is built from the two versions' `core.db` and `full.db` by `build/diff.py` and needs neither of them
-to be read.
+to be read. It does not read `foliage.db`: a foliage node is paired, its plants are not.
 
 Placements are matched within each sector path on their class and their mesh or template, by position: the same
 position to 1 cm first, then the nearest remaining placement within 10 m. A cooked 2.5 entry counts as the 2.31 class

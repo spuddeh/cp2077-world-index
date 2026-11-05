@@ -2,8 +2,8 @@
 //
 // The sector list comes from the game's three streaming blocks (Night City, Phantom Liberty, the main menu world),
 // plus every sector in the game archives that no block lists: the game never streams those, and each descriptor
-// says which block lists it (block null for none). Interior sectors with LOD suffixes other than _0 are included. Each sector goes through wkit.WorldIndexSector (a custom host build
-// that has it), which reads 2.31 and 2.5 sectors into the same shape. Output, under the dump directory's
+// says which block lists it (block null for none). Interior sectors with LOD suffixes other than _0 are included. Each sector goes through wkit.WorldIndexSector (a host function
+// WolvenKit does not ship), which reads 2.31 and 2.5 sectors into the same shape. Output, under the dump directory's
 // wscript\raw\world-index\<GAME>\:
 //   sectors.json        every descriptor: path, block, category, level, streaming box, variants, quest prefab
 //   part-<NN>.ndjson     one line per sector, CHUNK sectors per file
@@ -17,7 +17,7 @@
 // ONLY = "extra" reads just the main menu sectors and the unlisted ones into part-extra-<NN>.ndjson, for adding them to
 // an extract made with the two Night City blocks alone.
 //
-// Run it in the host with a 30-minute timeout.
+// A foliage run covers 2.31 at about 18 files in 19 minutes. Files 36 onward hold no foliage and read faster.
 
 // ---- CONFIG ----
 const GAME  = "2.5";        // the game version the loaded archives belong to; names the output folder
