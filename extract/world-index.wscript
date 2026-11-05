@@ -6,14 +6,16 @@
 // wscript\raw\world-index\<GAME>\:
 //   sectors.json        every descriptor: path, category, level, streaming box, variants, quest prefab
 //   part-<NN>.ndjson     one line per sector, CHUNK sectors per file
-//   errors-<PART>.json   sectors that could not be read, with the reason
-// A run stops after one PART of PARTS; set PART and run again until every part is written.
+//   errors-<NN>.json     the sectors of part-<NN> that could not be read, with the reason
+// A run writes the part files FROM to TO. Each file is written as soon as its sectors are read, so a run cut
+// short keeps every file it finished; run the rest by setting FROM. A whole game is 53 files: 2.5 reads about
+// 30 files in 15 minutes, 2.31 (read through the 2.31 helper) about 26 in 27 minutes, against the 30-minute cap.
 //
 // Run it in the host with a 30-minute timeout.
 
 // ---- CONFIG ----
 const GAME  = "2.5";        // the game version the loaded archives belong to; names the output folder
-const PART  = 0, PARTS = 2;  // this run reads part PART of PARTS
+const FROM  = 0, TO = 25;    // the first and last part-<NN> file this run writes
 const CHUNK = 500;          // sectors per NDJSON file
 // ----------------
 
@@ -43,15 +45,14 @@ for (const b of BLOCKS) {
     }
 }
 descriptors.sort(function (a, b) { return a.path < b.path ? -1 : a.path > b.path ? 1 : 0; });
-if (PART === 0) { wkit.SaveToRaw(OUT + "sectors.json", JSON.stringify(descriptors)); }
+if (FROM === 0) { wkit.SaveToRaw(OUT + "sectors.json", JSON.stringify(descriptors)); }
 
-// A part is a whole number of chunks, so two parts never write the same part-NN file.
-const size = Math.ceil(descriptors.length / PARTS / CHUNK) * CHUNK;
-const first = PART * size, last = Math.min(descriptors.length, first + size);
-logger.Info("sectors " + descriptors.length + "; part " + PART + " of " + PARTS + " reads " + first + ".." + (last - 1));
+const first = FROM * CHUNK, last = Math.min(descriptors.length, (TO + 1) * CHUNK);
+logger.Info("sectors " + descriptors.length + "; files " + pad(FROM) + ".." + pad(TO) + " read sectors " + first + ".." + (last - 1)
+    + "; the last file is " + pad(Math.ceil(descriptors.length / CHUNK) - 1));
 
-const errors = [];
-let lines = [], chunk = Math.floor(first / CHUNK), rows = 0;
+let errors = [], unreadable = 0;
+let lines = [], chunk = FROM, rows = 0;
 const started = Date.now();
 for (let k = first; k < last; k++) {
     const path = descriptors[k].path;
@@ -66,10 +67,14 @@ for (let k = first; k < last; k++) {
     }
     if ((k + 1) % CHUNK === 0 || k === last - 1) {
         wkit.SaveToRaw(OUT + "part-" + pad(chunk) + ".ndjson", lines.join("\n") + "\n");
-        logger.Info("part-" + pad(chunk) + ": " + lines.length + " sectors, " + Math.round((Date.now() - started) / 1000) + " s so far");
+        wkit.SaveToRaw(OUT + "errors-" + pad(chunk) + ".json", JSON.stringify(errors));
+        logger.Info("part-" + pad(chunk) + ": " + lines.length + " sectors, " + errors.length + " unreadable, "
+            + Math.round((Date.now() - started) / 1000) + " s so far");
+        unreadable += errors.length;
         lines = [];
+        errors = [];
         chunk++;
     }
 }
-wkit.SaveToRaw(OUT + "errors-" + PART + ".json", JSON.stringify(errors));
-logger.Info("DONE part " + PART + ": " + (last - first - errors.length) + " sectors, " + rows + " rows, " + errors.length + " unreadable, " + Math.round((Date.now() - started) / 1000) + " s");
+logger.Info("DONE files " + pad(FROM) + ".." + pad(chunk - 1) + ": " + (last - first - unreadable) + " sectors, " + rows
+    + " rows, " + unreadable + " unreadable, " + Math.round((Date.now() - started) / 1000) + " s");
