@@ -220,7 +220,7 @@ One row per pair, or per placement with no counterpart.
 | `key_id` | the mesh, material or template the pair matched on; NULL for classes with none |
 | `old_db`, `new_db` | `core` or `full`: which database of that version holds it |
 | `old_node_idx`, `new_node_idx` | the node index in each version |
-| `old_row`, `new_row` | the node-data row in each version |
+| `old_row`, `new_row` | the node-data row in each version: what an ArchiveXL `.xl` deletion or mutation `index` names |
 | `old_instance`, `new_instance` | a cooked entry's index within its node; NULL otherwise |
 | `old_instance_no`, `new_instance_no` | a copy's number within an instanced node; NULL otherwise |
 | `old_global_id`, `new_global_id` | the global node id in each version, signed as in `nodes` |
@@ -250,14 +250,15 @@ WHERE sector = 'base\worlds\03_night_city\_compiled\default\exterior_-8_-10_0_0.
   AND change <> 'same';
 ```
 
-Where a 2.31 node went in 2.5, for updating a removal or sector edit made against 2.31. A 2.31 node can become
-an entry of a cooked 2.5 node, so read `new_instance` too:
+Where a 2.31 row went in 2.5, for updating an ArchiveXL removal or sector edit made against 2.31. ArchiveXL's
+`index` is the node-data row, not the node index. Most rows kept their number (83% between 2.31 and 2.5), so a
+removal usually needs no change; this says which did not:
 
 ```sql
-SELECT change, class, new_node_idx, new_instance, new_row
+SELECT change, class, mesh_or_template, old_row, new_row, new_node_idx, new_instance
 FROM changes
-WHERE sector = 'base\worlds\03_night_city\_compiled\default\exterior_-8_19_0_1.streamingsector'
-  AND old_node_idx = 474;
+WHERE sector = 'base\worlds\03_night_city\_compiled\default\interior_-44_39_3_0.streamingsector'
+  AND old_row = 223;
 ```
 
 Everything added within 100 m of a point:
