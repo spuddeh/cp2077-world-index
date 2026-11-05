@@ -8,7 +8,10 @@ encoding to undo.
 and every other node that is not visual or physical. `full.db` holds meshes, decals, lights, foliage, water,
 collision and the like. Each placement is in exactly one of them. `foliage.db` holds the plants of the foliage
 nodes in `full.db`: one row per plant, `type` `worldFoliageNode`, with the node's mesh, `node_idx` and `row_idx`,
-`instance_no` the plant's number and `position_source` `instance`. Open the others with `ATTACH`:
+`instance_no` the plant's number and `position_source` `instance`. It is about 10.3 million rows per version,
+1.7 GB raw and 523 MB under zstd. Plant scale is stored as the game has it, and a few thousand plants are below
+0.001. The 95 foliage nodes of `exterior_0_0_0_0` have no plants, so they are in `full.db` only. Open the others
+with `ATTACH`:
 
 ```sql
 ATTACH 'full.db' AS full;
@@ -20,7 +23,7 @@ ATTACH 'foliage.db' AS foliage;
 ### `meta`
 
 `key`, `value`: `game_version`, `schema_version`, `built_utc`, `build_commit`, `sectors_read`, `sectors_listed`,
-`database` (`core` or `full`).
+`database` (`core`, `full` or `foliage`).
 
 ### `strings`
 
@@ -107,8 +110,8 @@ points, in the node's own space). One row per placement of a trigger, area or ot
 ### `nodes_rtree`, `sectors_rtree`
 
 SQLite R*Tree indexes on x and y. `nodes_rtree` covers each placement and is in `core.db` only. `sectors_rtree`
-is the box around each sector's placements, in both databases; in `full.db` it is the way to find placements
-near a point.
+is the box around each sector's placements, in every database; in `full.db` and `foliage.db` it is the way to find
+placements near a point.
 
 ## Views
 

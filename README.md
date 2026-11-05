@@ -31,7 +31,7 @@ Each game version is one GitHub Release holding two databases, and an optional t
 | --- | --- |
 | `core.db` | entities, devices, smart objects, AI spots, markers, triggers and areas, community spawns, and every TweakDB reference |
 | `full.db` | everything else: meshes, decals, lights, foliage nodes, water, sound and the rest |
-| `foliage.db` | optional: every plant of every foliage node, one row each (about 9 million) |
+| `foliage.db` | optional: every plant of every foliage node, one row each (about 10.3 million; 1.7 GB, 523 MB under zstd) |
 
 `core.db` answers most questions alone. Open `full.db` beside it with `ATTACH` when a query needs a mesh
 node. A separate Release holds the differences between two game versions.
