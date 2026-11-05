@@ -25,12 +25,13 @@ game changed, and what each derived set needs to follow.
 
 ## Files
 
-Each game version is one GitHub Release holding two databases with the same schema:
+Each game version is one GitHub Release holding two databases, and an optional third, with the same schema:
 
 | File | Holds |
 | --- | --- |
 | `core.db` | entities, devices, smart objects, AI spots, markers, triggers and areas, community spawns, and every TweakDB reference |
-| `full.db` | everything else: meshes, decals, lights, foliage, water, sound and the rest |
+| `full.db` | everything else: meshes, decals, lights, foliage nodes, water, sound and the rest |
+| `foliage.db` | optional: every plant of every foliage node, one row each (about 9 million) |
 
 `core.db` answers most questions alone. Open `full.db` beside it with `ATTACH` when a query needs a mesh
 node. A separate Release holds the differences between two game versions.

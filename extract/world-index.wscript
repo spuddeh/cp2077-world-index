@@ -9,6 +9,8 @@
 //   part-<NN>.ndjson     one line per sector, CHUNK sectors per file
 //   errors-<NN>.json     the sectors of part-<NN> that could not be read, with the reason
 //   part-extra-<NN>.ndjson, errors-extra-<NN>.json   the same, for an ONLY = "extra" run
+//   foliage-<NN>.ndjson, errors-foliage-<NN>.json      an ONLY = "foliage" run: each sector's foliage plants
+//                        (wkit.WorldIndexFoliage), one line per sector that has any, for build.py's foliage.db
 // A run writes the part files FROM to TO. Each file is written as soon as its sectors are read, so a run cut
 // short keeps every file it finished; run the rest by setting FROM. A whole game is 53 files: 2.5 reads about
 // 30 files in 15 minutes, 2.31 (read through the 2.31 helper) about 26 in 27 minutes, against the 30-minute cap.
@@ -20,7 +22,8 @@
 // ---- CONFIG ----
 const GAME  = "2.5";        // the game version the loaded archives belong to; names the output folder
 const FROM  = 0, TO = 25;    // the first and last part-<NN> file this run writes
-const ONLY  = null;           // "extra": the main menu and unlisted sectors only, into part-extra-<NN>.ndjson
+const ONLY  = null;         // "extra": the main menu and unlisted sectors, into part-extra-<NN>.ndjson;
+                            // "foliage": every sector's foliage plants, into foliage-<NN>.ndjson
 const CHUNK = 500;          // sectors per NDJSON file
 // ----------------
 
@@ -68,7 +71,7 @@ for (const f of wkit.GetArchiveFiles()) {
     descriptors.push({ path: path, block: null, category: null, level: null, min: null, max: null, prefab: null, variants: [] });
 }
 descriptors.sort(function (a, b) { return a.path < b.path ? -1 : a.path > b.path ? 1 : 0; });
-if (FROM === 0 || ONLY === "extra") { wkit.SaveToRaw(OUT + "sectors.json", JSON.stringify(descriptors)); }
+if ((FROM === 0 && ONLY !== "foliage") || ONLY === "extra") { wkit.SaveToRaw(OUT + "sectors.json", JSON.stringify(descriptors)); }
 logger.Info("sectors " + descriptors.length + ": " + descriptors.filter(function (d) { return d.block === null; }).length
     + " listed by no block; " + modded + " sector paths served only by mod archives were left out");
 
@@ -83,16 +86,18 @@ logger.Info(ONLY === "extra" ? "extra: " + todo.length + " sectors"
 
 let errors = [], unreadable = 0;
 let lines = [], chunk = ONLY === "extra" ? 0 : FROM, rows = 0;
-const prefix = ONLY === "extra" ? "part-extra-" : "part-", errPrefix = ONLY === "extra" ? "errors-extra-" : "errors-";
+const prefix = ONLY === "extra" ? "part-extra-" : ONLY === "foliage" ? "foliage-" : "part-";
+const errPrefix = ONLY === "extra" ? "errors-extra-" : ONLY === "foliage" ? "errors-foliage-" : "errors-";
 const started = Date.now();
 for (let k = first; k < last; k++) {
     const path = todo[k].path;
     let text;
-    try { text = wkit.WorldIndexSector(path); } catch (e) { text = JSON.stringify({ path: path, error: String(e) }); }
+    try { text = ONLY === "foliage" ? wkit.WorldIndexFoliage(path) : wkit.WorldIndexSector(path); }
+    catch (e) { text = JSON.stringify({ path: path, error: String(e) }); }
     const parsed = JSON.parse(text);
     if (parsed.error || parsed.found === false) {
         errors.push({ path: path, error: parsed.error || "not in the loaded archives" });
-    } else {
+    } else if (ONLY !== "foliage" || parsed.rows.length > 0) {
         rows += parsed.rows.length;
         lines.push(text);
     }

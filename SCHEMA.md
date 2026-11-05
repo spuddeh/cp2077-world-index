@@ -1,15 +1,18 @@
 # Schema
 
-Both databases, `core.db` and `full.db`, use this schema. Any SQLite client opens them: `sqlite3`, DB Browser for
+`core.db`, `full.db` and the optional `foliage.db` use this schema. Any SQLite client opens them: `sqlite3`, DB Browser for
 SQLite, Python's `sqlite3` module. Every value is stored as the game stores it, in metres and degrees, with no
 encoding to undo.
 
 `core.db` holds entities, devices, smart objects, AI spots, markers, triggers and areas, community and crowd data,
 and every other node that is not visual or physical. `full.db` holds meshes, decals, lights, foliage, water,
-collision and the like. Each placement is in exactly one of them. Open both with `ATTACH`:
+collision and the like. Each placement is in exactly one of them. `foliage.db` holds the plants of the foliage
+nodes in `full.db`: one row per plant, `type` `worldFoliageNode`, with the node's mesh, `node_idx` and `row_idx`,
+`instance_no` the plant's number and `position_source` `instance`. Open the others with `ATTACH`:
 
 ```sql
 ATTACH 'full.db' AS full;
+ATTACH 'foliage.db' AS foliage;
 ```
 
 ## Tables

@@ -176,11 +176,44 @@ def main():
                         db.flush()
         print(f"{os.path.basename(part)}: core {core.next_id - 1:,} full {full.next_id - 1:,}", flush=True)
 
+    # foliage.db: one placement per plant of each worldFoliageNode, from an ONLY = "foliage" extract. The foliage
+    # node itself stays in full.db; its plants live here so full.db keeps its size.
+    dbs = [("core", core), ("full", full)]
+    foliage_path = os.path.join(a.out, "foliage.db")
+    foliage_parts = sorted(glob.glob(os.path.join(a.src, "foliage-*.ndjson")))
+    if foliage_parts:
+        foliage = Db(foliage_path)
+        dbs.append(("foliage", foliage))
+        for part in foliage_parts:
+            with open(part, encoding="utf-8") as f:
+                for line in f:
+                    if not line.strip():
+                        continue
+                    s = json.loads(line)
+                    sid = sector_ids[s["path"]]
+                    starts = s.get("variantIndices") or []
+                    for row, idx, mesh, app, plants in s["rows"]:
+                        if not plants:
+                            continue
+                        foliage.sectors.add(sid)
+                        for number, (x, y, z, qi, qj, qk, qr, sx, sy, sz) in enumerate(plants):
+                            pid = foliage.next_id
+                            foliage.next_id += 1
+                            foliage.nodes.append((pid, sid, idx, row, None, foliage.s("worldFoliageNode"), None, None,
+                                                  x, y, z, round(yaw_degrees(qi, qj, qk, qr), 2), qi, qj, qk, qr,
+                                                  sx, sy, sz, foliage.s(mesh), foliage.s(app), None, None, None,
+                                                  variant_of(row, starts), None, number, "instance"))
+                    if len(foliage.nodes) > 200000:
+                        foliage.flush()
+            print(f"{os.path.basename(part)}: foliage {foliage.next_id - 1:,}", flush=True)
+    elif os.path.exists(foliage_path):
+        os.remove(foliage_path)   # a foliage.db from an earlier build would not match this one
+
     meta = {"game_version": a.game, "schema_version": str(SCHEMA_VERSION),
             "built_utc": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
             "build_commit": git_commit() or "", "sectors_read": str(len(read)),
             "sectors_listed": str(len(descriptors))}
-    for name, db in (("core", core), ("full", full)):
+    for name, db in dbs:
         db.flush()
         c = db.con
         c.executemany("INSERT INTO strings VALUES (?,?)", ((i, t) for t, i in db.strings.items()))
@@ -198,8 +231,8 @@ def main():
         c.executemany("INSERT INTO meta VALUES (?,?)", list(meta.items()) + [("database", name)])
         # The box around each sector's placements in this database: a quest sector's streaming box is infinite.
         c.execute("""INSERT INTO sectors_rtree SELECT sector_id, MIN(x), MAX(x), MIN(y), MAX(y) FROM nodes GROUP BY sector_id""")
-        # full.db finds placements near a point through sectors_rtree, then nodes_sector: a per-placement tree
-        # over 7.5 million mesh rows would be a third of the file. Same for its type indexes.
+        # full.db and foliage.db find placements near a point through sectors_rtree, then nodes_sector: a
+        # per-placement tree over millions of mesh rows or plants would be a third of the file. Same for type indexes.
         indexes = "indexes.sql"
         if name == "core":
             c.execute("INSERT INTO nodes_rtree SELECT id, x, x, y, y FROM nodes")
