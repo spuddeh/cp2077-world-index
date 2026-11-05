@@ -26,13 +26,16 @@ holds its `id`. Each database has its own `strings`, so ids do not match between
 
 ### `sectors`
 
-One row per streaming sector that has a placement in this database.
+One row per streaming sector that has a placement in this database. Every `.streamingsector` in the game's
+archives is read: the three worlds' streaming blocks list all but a few, and those few are kept with `block` NULL.
 
 | Column | |
 | --- | --- |
 | `id` | sector id, the same in both databases |
 | `path_id` | the `.streamingsector` path |
-| `category` | `Exterior`, `Interior`, `Quest`, `Navigation` or `AlwaysLoaded` |
+| `world` | the world it belongs to: `03_night_city` (with Phantom Liberty) or `04_main_menu`, the main menu's backdrop, whose positions are not Night City's |
+| `block` | the streaming block that lists it: `night_city`, `ep1` (Phantom Liberty) or `main_menu`; NULL for a sector no block lists, which the game never streams |
+| `category` | `Exterior`, `Interior`, `Quest`, `Navigation` or `AlwaysLoaded`; NULL when `block` is NULL |
 | `level` | streaming level |
 | `prefab_id` | a quest sector's prefab node path, which names the place and the state it belongs to |
 | `min_x` .. `max_z` | the streaming box; NULL for a quest sector, whose box is infinite |

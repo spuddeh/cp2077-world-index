@@ -6,10 +6,12 @@ CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT);
 
 CREATE TABLE strings (id INTEGER PRIMARY KEY, text TEXT NOT NULL);
 
--- One streaming sector, from the streaming blocks. min/max is the streaming box; NULL for a quest sector,
--- whose box is infinite. variants: [{name, on, range}], range 0 always on.
+-- One streaming sector. world is the world folder it belongs to (03_night_city, 04_main_menu). block is the
+-- streaming block that lists it (night_city, ep1, main_menu), NULL for a sector in the game files that no block
+-- lists: the game never streams it, and it has no category, level or box. min/max is the streaming box; NULL for
+-- a quest sector, whose box is infinite. variants: [{name, on, range}], range 0 always on.
 CREATE TABLE sectors (
-    id INTEGER PRIMARY KEY, path_id INTEGER, category TEXT, level INTEGER, prefab_id INTEGER,
+    id INTEGER PRIMARY KEY, path_id INTEGER, world TEXT, block TEXT, category TEXT, level INTEGER, prefab_id INTEGER,
     min_x REAL, min_y REAL, min_z REAL, max_x REAL, max_y REAL, max_z REAL, variants TEXT
 );
 

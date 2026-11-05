@@ -16,7 +16,7 @@ import re
 import sqlite3
 import subprocess
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 ARRAY_INDEX = re.compile(r"\[(\d+)\]")
 HERE = os.path.dirname(os.path.abspath(__file__))
 
@@ -189,8 +189,9 @@ def main():
             if sid not in db.sectors:
                 continue
             lo, hi = d.get("min") or [None] * 3, d.get("max") or [None] * 3
-            c.execute("INSERT INTO sectors VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
-                      (sid, db.s(path), d["category"], d["level"], db.s(d.get("prefab")),
+            c.execute("INSERT INTO sectors VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                      (sid, db.s(path), path.split("\\")[2], d.get("block"), d["category"], d["level"],
+                       db.s(d.get("prefab")),
                        *lo, *hi, json.dumps(d.get("variants") or [], separators=(",", ":"))))
         # Strings added while writing sectors.
         c.executemany("INSERT OR IGNORE INTO strings VALUES (?,?)", ((i, t) for t, i in db.strings.items()))
