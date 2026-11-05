@@ -16,6 +16,13 @@ import sqlite3
 from collections import defaultdict
 
 MOVE_LIMIT = 10.0      # metres: a nearer unmatched pair is the same placement, moved
+
+# Classes 2.5 renamed one for one, without cooking several nodes into one. Both sides compare under the 2.31 name.
+CLASS_ALIASES = {
+    "worldCookedCollisionNode": "worldCollisionNode",
+    "worldCookedAcousticSectorNode": "worldAcousticSectorNode",
+    "worldCookedFoliageDestructionNode": "worldFoliageDestructionNode",
+}
 SAME = 0.01            # metres: closer than this is unmoved
 BRUTE_MAX = 4_000_000  # pair comparisons per group before the nearest-pair pass gives up on it
 
@@ -77,7 +84,7 @@ def read(folder):
                 if current is not None:
                     yield current, groups
                 current, groups = path, defaultdict(list)
-            groups[(cls, key)].append((db, idx, row, gid, x, y, z))
+            groups[(CLASS_ALIASES.get(cls, cls), key)].append((db, idx, row, gid, x, y, z))
         if current is not None:
             yield current, groups
         c.close()
