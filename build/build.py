@@ -16,8 +16,14 @@ import re
 import sqlite3
 import subprocess
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 HERE = os.path.dirname(os.path.abspath(__file__))
+TILT = 1e-5          # a quaternion with |i| or |j| above this has pitch or roll and is stored whole
+CONSTANT_MIN = 1000  # a reference path this common with one value goes to constant_refs instead
+
+
+def mm(metres):
+    return round(metres * 1000)
 
 # A type whose name matches goes to full.db. Matched against the entry type when the row is a cooked entry.
 FULL = re.compile(r"Mesh|Decal|Foliage|Water|Acoustic|Collision|Light|Particle|Occluder|Terrain|GINode|GISpace"
@@ -52,7 +58,7 @@ class Db:
     def flush(self):
         c = self.con
         c.executemany("INSERT INTO nodes VALUES (" + ",".join("?" * 26) + ")", self.nodes)
-        c.executemany("INSERT INTO node_refs VALUES (?,?,?,?,?)", self.refs)
+        c.executemany("INSERT OR IGNORE INTO node_refs VALUES (?,?,?,?,?)", self.refs)
         c.executemany("INSERT INTO outlines VALUES (?,?,?,?)", self.outlines)
         self.nodes, self.refs, self.outlines = [], [], []
 
@@ -127,11 +133,15 @@ def main():
                     db.sectors.add(sid)
                     pid = db.next_id
                     db.next_id += 1
+                    tilted = abs(qi) > TILT or abs(qj) > TILT
+                    unscaled = sx == 1 and sy == 1 and sz == 1
                     db.nodes.append((pid, sid, idx, row, inst if inst >= 0 else None, db.s(ntype), db.s(entry),
-                                     signed64(gid), x, y, z, qi, qj, qk, qr, sx, sy, sz,
-                                     round(yaw_degrees(qi, qj, qk, qr), 2),
+                                     signed64(gid), mm(x), mm(y), mm(z),
+                                     round(yaw_degrees(qi, qj, qk, qr) * 100),
+                                     *((qi, qj, qk, qr) if tilted else (None,) * 4),
+                                     *((None,) * 3 if unscaled else (sx, sy, sz)),
                                      db.s(res), db.s(app), db.s(node.get("tpl")), db.s(node.get("app")),
-                                     db.s(node.get("d")), variant_of(row, starts), round(dist, 2)))
+                                     db.s(node.get("d")), variant_of(row, starts), round(dist * 10)))
                     if idx not in placed_in:
                         placed_in[idx] = (db, pid)
                     ol = node.get("outline")
@@ -141,7 +151,10 @@ def main():
                         db.outlines.append((pid, ol["h"] * sz, json.dumps(pts, separators=(",", ":")),
                                             json.dumps(ol["p"], separators=(",", ":"))))
                 for idx, (db, pid) in placed_in.items():
-                    for kind, at, value in nodes.get(idx, {}).get("refs", []):
+                    node = nodes.get(idx, {})
+                    for kind, at, value in node.get("refs", []):
+                        if at == "entityTemplate":
+                            continue   # the template_id column holds it
                         db.refs.append((sid, idx, kind, db.s(re.sub(r"\[\d+\]", "[]", at)), db.s(value)))
                 for db in (core, full):
                     if len(db.nodes) > 200000:
@@ -167,8 +180,24 @@ def main():
         # Strings added while writing sectors.
         c.executemany("INSERT OR IGNORE INTO strings VALUES (?,?)", ((i, t) for t, i in db.strings.items()))
         c.executemany("INSERT INTO meta VALUES (?,?)", list(meta.items()) + [("database", name)])
-        c.execute("INSERT INTO nodes_rtree SELECT id, x, x, y, y, z, z FROM nodes")
-        with open(os.path.join(HERE, "indexes.sql"), encoding="utf-8") as f:
+        # A path that holds one value on every node it appears on says nothing per node: keep the value once.
+        constant = c.execute(f"""SELECT r.path_id, MIN(r.value_id), COUNT(*) FROM node_refs r GROUP BY r.path_id
+                                 HAVING COUNT(*) >= {CONSTANT_MIN} AND COUNT(DISTINCT r.value_id) = 1""").fetchall()
+        for path_id, value_id, count in constant:
+            c.execute("DELETE FROM node_refs WHERE path_id = ?", (path_id,))
+            c.execute("INSERT INTO constant_refs VALUES (?,?,?)", (path_id, value_id, count))
+        # The box around each sector's placements in this database: a quest sector's streaming box is infinite.
+        c.execute("""INSERT INTO sectors_rtree SELECT sector_id, MIN(x_mm) / 1000.0, MAX(x_mm) / 1000.0,
+                     MIN(y_mm) / 1000.0, MAX(y_mm) / 1000.0 FROM nodes GROUP BY sector_id""")
+        # full.db finds placements near a point through sectors_rtree, then nodes_sector: a per-placement tree
+        # over 7.5 million mesh rows would be a third of the file. Same for its type indexes.
+        indexes = "indexes.sql"
+        if name == "core":
+            c.execute("INSERT INTO nodes_rtree SELECT id, x_mm / 1000.0, x_mm / 1000.0, y_mm / 1000.0, y_mm / 1000.0 FROM nodes")
+        else:
+            c.execute("DROP TABLE nodes_rtree")
+            indexes = "indexes-full.sql"
+        with open(os.path.join(HERE, indexes), encoding="utf-8") as f:
             c.executescript(f.read())
         c.commit()
         c.execute("VACUUM")
