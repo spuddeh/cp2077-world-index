@@ -169,3 +169,97 @@ WHERE sector IN (SELECT sp.text FROM full.sectors_rtree t
   AND abs(x + 1000) < 50 AND abs(y - 2500) < 50
 GROUP BY kind ORDER BY 2 DESC;
 ```
+
+# The diff between two versions
+
+`diff-<old>-<new>.db` (e.g. `diff-2.31-2.5.db`) pairs every placement of one game version with its counterpart in
+the next. It is built from the two versions' `core.db` and `full.db` by `build/diff.py` and needs neither of them
+to be read.
+
+Placements are matched within each sector path on their class and their mesh or template, by position: the same
+position to 1 cm first, then the nearest remaining placement within 10 m. A cooked 2.5 entry counts as the 2.31 class
+it stands for, and three classes 2.5 renamed (`worldCookedCollisionNode`, `worldCookedAcousticSectorNode`,
+`worldCookedFoliageDestructionNode`) compare under their 2.31 names. Node indexes are not a key: 2.5 cooks many
+nodes into one, so almost every index changed.
+
+## Tables
+
+### `meta`
+
+`old_game`, `new_game`, `old_build`, `new_build`, `built_utc`, `move_limit_m`, and `counts` (JSON: placements
+per change).
+
+### `strings`
+
+As in the version databases.
+
+### `sectors`
+
+`id`, `path_id`, `in_old`, `in_new` (1 when the sector exists in that version), `old_placements`, `new_placements`.
+
+### `placements`
+
+One row per pair, or per placement with no counterpart.
+
+| Column | |
+| --- | --- |
+| `sector_id` | the sector |
+| `change` | `same`, `moved` (paired, more than 1 cm apart), `added` (new version only) or `removed` (old version only) |
+| `class_id` | the class, under its 2.31 name |
+| `key_id` | the mesh, material or template the pair matched on; NULL for classes with none |
+| `old_db`, `new_db` | `core` or `full`: which database of that version holds it |
+| `old_node_idx`, `new_node_idx` | the node index in each version |
+| `old_row`, `new_row` | the node-data row in each version |
+| `old_instance`, `new_instance` | a cooked entry's index within its node; NULL otherwise |
+| `old_global_id`, `new_global_id` | the global node id in each version, signed as in `nodes` |
+| `old_x` .. `new_z` | position in each version, metres |
+| `distance` | metres between the two positions; NULL when one side is missing |
+
+The `old_` columns are NULL for `added` and the `new_` columns for `removed`.
+
+## View
+
+`changes` is `placements` with `sector`, `class` and `mesh_or_template` as text.
+
+## Example queries
+
+How much changed:
+
+```sql
+SELECT change, count(*) FROM placements GROUP BY change;
+```
+
+What changed in one sector:
+
+```sql
+SELECT change, class, mesh_or_template, old_node_idx, new_node_idx, distance
+FROM changes
+WHERE sector = 'base\worlds\03_night_city\_compiled\default\exterior_-8_-10_0_0.streamingsector'
+  AND change <> 'same';
+```
+
+Where a 2.31 node went in 2.5, for updating a removal or sector edit made against 2.31. A 2.31 node can become
+an entry of a cooked 2.5 node, so read `new_instance` too:
+
+```sql
+SELECT change, class, new_node_idx, new_instance, new_row
+FROM changes
+WHERE sector = 'base\worlds\03_night_city\_compiled\default\exterior_-8_19_0_1.streamingsector'
+  AND old_node_idx = 474;
+```
+
+Everything added within 100 m of a point:
+
+```sql
+SELECT sector, class, mesh_or_template, new_x, new_y, new_z
+FROM changes
+WHERE change = 'added' AND new_x BETWEEN -1100 AND -900 AND new_y BETWEEN 2400 AND 2600;
+```
+
+Whether a node kept its global id:
+
+```sql
+SELECT count(*) AS paired_with_ids, sum(old_global_id = new_global_id) AS kept
+FROM placements
+WHERE change IN ('same', 'moved') AND old_global_id IS NOT NULL AND new_global_id IS NOT NULL;
+```
