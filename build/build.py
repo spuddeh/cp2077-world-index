@@ -16,7 +16,7 @@ import re
 import sqlite3
 import subprocess
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 ARRAY_INDEX = re.compile(r"\[(\d+)\]")
 HERE = os.path.dirname(os.path.abspath(__file__))
 
@@ -52,7 +52,7 @@ class Db:
 
     def flush(self):
         c = self.con
-        c.executemany("INSERT INTO nodes VALUES (" + ",".join("?" * 26) + ")", self.nodes)
+        c.executemany("INSERT INTO nodes VALUES (" + ",".join("?" * 28) + ")", self.nodes)
         c.executemany("INSERT OR IGNORE INTO node_refs VALUES (?,?,?,?,?,?)", self.refs)
         c.executemany("INSERT INTO outlines VALUES (?,?,?,?)", self.outlines)
         self.nodes, self.refs, self.outlines = [], [], []
@@ -125,22 +125,36 @@ def main():
                 starts = s.get("variantIndices") or []
                 placed_in = {}   # node index -> (db, first placement id, row)
                 for r in s["rows"]:
-                    (row, idx, inst, entry, gid, x, y, z, qi, qj, qk, qr, sx, sy, sz, res, app, dist) = r
+                    (row, idx, inst, entry, gid, x, y, z, qi, qj, qk, qr, sx, sy, sz, res, app, dist, instances) = r
                     node = nodes.get(idx, {})
                     ntype = node.get("t", "?")
                     db = full if FULL.search(entry or ntype) else core
+                    if instances is not None:
+                        # An instanced mesh or destructible: one placement per instance, at its own transform. A row
+                        # whose instances an earlier row of the same node already listed ([]) adds none.
+                        transforms = [(t, k, "instance") for k, t in enumerate(instances)]
+                    elif node.get("b") and x == 0 and y == 0 and z == 0:
+                        # A node stored at the origin with world bounds (an instanced occluder): the bounds' centre.
+                        b = node["b"]
+                        centre = ((b[0] + b[3]) / 2, (b[1] + b[4]) / 2, (b[2] + b[5]) / 2)
+                        transforms = [((*centre, qi, qj, qk, qr, sx, sy, sz), None, "bounds")]
+                    else:
+                        transforms = [((x, y, z, qi, qj, qk, qr, sx, sy, sz), None, "row")]
+                    if not transforms:
+                        continue
                     db.sectors.add(sid)
-                    pid = db.next_id
-                    db.next_id += 1
-                    db.nodes.append((pid, sid, idx, row, inst if inst >= 0 else None, db.s(ntype), db.s(entry),
-                                     signed64(gid), x, y, z, round(yaw_degrees(qi, qj, qk, qr), 2),
-                                     qi, qj, qk, qr, sx, sy, sz,
-                                     db.s(res), db.s(app), db.s(node.get("tpl")), db.s(node.get("app")),
-                                     db.s(node.get("d")), variant_of(row, starts), dist))
-                    if idx not in placed_in:
-                        placed_in[idx] = (db, pid)
+                    for (px, py, pz, pi, pj, pk, pr, psx, psy, psz), number, source in transforms:
+                        pid = db.next_id
+                        db.next_id += 1
+                        db.nodes.append((pid, sid, idx, row, inst if inst >= 0 else None, db.s(ntype), db.s(entry),
+                                         signed64(gid), px, py, pz, round(yaw_degrees(pi, pj, pk, pr), 2),
+                                         pi, pj, pk, pr, psx, psy, psz,
+                                         db.s(res), db.s(app), db.s(node.get("tpl")), db.s(node.get("app")),
+                                         db.s(node.get("d")), variant_of(row, starts), dist, number, source))
+                        if idx not in placed_in:
+                            placed_in[idx] = (db, pid)
                     ol = node.get("outline")
-                    if ol:
+                    if ol and source == "row":
                         pts = [rotate((qi, qj, qk, qr), (p[0] * sx, p[1] * sy, p[2] * sz)) for p in ol["p"]]
                         pts = [[round(x + px, 3), round(y + py, 3), round(z + pz, 3)] for px, py, pz in pts]
                         db.outlines.append((pid, ol["h"] * sz, json.dumps(pts, separators=(",", ":")),
@@ -148,8 +162,6 @@ def main():
                 for idx, (db, pid) in placed_in.items():
                     node = nodes.get(idx, {})
                     for kind, at, value in node.get("refs", []):
-                        if at == "entityTemplate":
-                            continue   # the template_id column holds it
                         if kind in ("gid", "eid"):
                             value = str(signed64(value))   # the same signed form as nodes.global_id
                         positions = ARRAY_INDEX.findall(at)

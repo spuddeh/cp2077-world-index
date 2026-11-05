@@ -35,19 +35,22 @@ CREATE TABLE sectors (id INTEGER PRIMARY KEY, path_id INTEGER, in_old INTEGER, i
 -- Each placement of the old version paired with its counterpart in the new one, or NULL on the missing side.
 -- change: same, moved, added (new only), removed (old only). distance is metres between the two positions.
 -- class_id is the 2.31 class; key_id the mesh or template the match was made on. node_idx, row and instance
--- (a cooked entry's index within its node, NULL otherwise) address the placement in its own version.
+-- (a cooked entry's index within its node, NULL otherwise) address the placement in its own version;
+-- instance_no numbers the instances of an instanced mesh or destructible within its node.
 CREATE TABLE placements (
     sector_id INTEGER, change TEXT, class_id INTEGER, key_id INTEGER,
-    old_db TEXT, old_node_idx INTEGER, old_row INTEGER, old_instance INTEGER, old_global_id INTEGER,
+    old_db TEXT, old_node_idx INTEGER, old_row INTEGER, old_instance INTEGER, old_instance_no INTEGER,
+    old_global_id INTEGER,
     old_x REAL, old_y REAL, old_z REAL,
-    new_db TEXT, new_node_idx INTEGER, new_row INTEGER, new_instance INTEGER, new_global_id INTEGER,
+    new_db TEXT, new_node_idx INTEGER, new_row INTEGER, new_instance INTEGER, new_instance_no INTEGER,
+    new_global_id INTEGER,
     new_x REAL, new_y REAL, new_z REAL,
     distance REAL
 );
 CREATE VIEW changes AS
 SELECT sp.text AS sector, p.change, c.text AS class, k.text AS mesh_or_template,
-       p.old_db, p.old_node_idx, p.old_row, p.old_instance, p.old_global_id, p.old_x, p.old_y, p.old_z,
-       p.new_db, p.new_node_idx, p.new_row, p.new_instance, p.new_global_id, p.new_x, p.new_y, p.new_z, p.distance
+       p.old_db, p.old_node_idx, p.old_row, p.old_instance, p.old_instance_no, p.old_global_id, p.old_x, p.old_y, p.old_z,
+       p.new_db, p.new_node_idx, p.new_row, p.new_instance, p.new_instance_no, p.new_global_id, p.new_x, p.new_y, p.new_z, p.distance
 FROM placements p JOIN sectors s ON s.id = p.sector_id JOIN strings sp ON sp.id = s.path_id
 LEFT JOIN strings c ON c.id = p.class_id LEFT JOIN strings k ON k.id = p.key_id;
 """
@@ -61,7 +64,7 @@ CREATE INDEX placements_new ON placements (sector_id, new_node_idx) WHERE new_no
 """
 
 READ = """
-SELECT sp.text, coalesce(et.text, t.text), coalesce(r.text, tp.text), n.node_idx, n.row_idx, n.instance_index, n.global_id, n.x, n.y, n.z
+SELECT sp.text, coalesce(et.text, t.text), coalesce(r.text, tp.text), n.node_idx, n.row_idx, n.instance_index, n.instance_no, n.global_id, n.x, n.y, n.z
 FROM {s}.nodes n
 JOIN {s}.sectors sc ON sc.id = n.sector_id JOIN {s}.strings sp ON sp.id = sc.path_id
 LEFT JOIN {s}.strings t ON t.id = n.type_id LEFT JOIN {s}.strings et ON et.id = n.entry_type_id
@@ -71,7 +74,7 @@ LEFT JOIN {s}.strings r ON r.id = n.resource_id LEFT JOIN {s}.strings tp ON tp.i
 
 def read(folder):
     """The index's meta, and its sectors one at a time in path order: (path, {(class, key): [placement]})
-    with each placement (db, node_idx, row, instance_index, global_id, x, y, z). One sector in memory at a time."""
+    with each placement (db, node_idx, row, instance_index, instance_no, global_id, x, y, z). One sector in memory at a time."""
     c = sqlite3.connect(os.path.join(folder, "core.db"))
     meta = dict(c.execute("SELECT key, value FROM meta"))
     parts = ["SELECT 'core', * FROM (" + READ.format(s="main") + ")"]
@@ -82,12 +85,12 @@ def read(folder):
 
     def sectors():
         current, groups = None, defaultdict(list)
-        for db, path, cls, key, idx, row, inst, gid, x, y, z in c.execute(query):
+        for db, path, cls, key, idx, row, inst, no, gid, x, y, z in c.execute(query):
             if path != current:
                 if current is not None:
                     yield current, groups
                 current, groups = path, defaultdict(list)
-            groups[(CLASS_ALIASES.get(cls, cls), key)].append((db, idx, row, inst, gid, x, y, z))
+            groups[(CLASS_ALIASES.get(cls, cls), key)].append((db, idx, row, inst, no, gid, x, y, z))
         if current is not None:
             yield current, groups
         c.close()
@@ -115,11 +118,11 @@ def pair(old, new):
     pairs = []
     by_pos = defaultdict(list)
     for i, p in enumerate(new):
-        by_pos[(round(p[5], 2), round(p[6], 2), round(p[7], 2))].append(i)
+        by_pos[(round(p[6], 2), round(p[7], 2), round(p[8], 2))].append(i)
     taken_new = set()
     rest_old = []
     for o in old:
-        slot = by_pos.get((round(o[5], 2), round(o[6], 2), round(o[7], 2)))
+        slot = by_pos.get((round(o[6], 2), round(o[7], 2), round(o[8], 2)))
         if slot:
             i = slot.pop()
             taken_new.add(i)
@@ -131,7 +134,7 @@ def pair(old, new):
         candidates = []
         for a, o in enumerate(rest_old):
             for b, n in enumerate(rest_new):
-                d = math.dist(o[5:8], n[5:8])
+                d = math.dist(o[6:9], n[6:9])
                 if d <= MOVE_LIMIT:
                     candidates.append((d, a, b))
         candidates.sort()
@@ -189,14 +192,14 @@ def main():
                 rows.append((sid, change, s(cls), s(key), *o, *n, round(d, 3)))
             for o in removed:
                 counts["removed"] += 1
-                rows.append((sid, "removed", s(cls), s(key), *o, *(None,) * 8, None))
+                rows.append((sid, "removed", s(cls), s(key), *o, *(None,) * 9, None))
             for n in added:
                 counts["added"] += 1
-                rows.append((sid, "added", s(cls), s(key), *(None,) * 8, *n, None))
+                rows.append((sid, "added", s(cls), s(key), *(None,) * 9, *n, None))
         if len(rows) > 500_000:
-            con.executemany("INSERT INTO placements VALUES (" + ",".join("?" * 21) + ")", rows)
+            con.executemany("INSERT INTO placements VALUES (" + ",".join("?" * 23) + ")", rows)
             rows = []
-    con.executemany("INSERT INTO placements VALUES (" + ",".join("?" * 21) + ")", rows)
+    con.executemany("INSERT INTO placements VALUES (" + ",".join("?" * 23) + ")", rows)
     con.executemany("INSERT INTO strings VALUES (?,?)", ((i, t) for t, i in strings.items()))
     meta = {"old_game": old_meta["game_version"], "new_game": new_meta["game_version"],
             "old_build": old_meta.get("build_commit", ""), "new_build": new_meta.get("build_commit", ""),

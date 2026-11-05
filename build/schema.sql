@@ -17,13 +17,17 @@ CREATE TABLE sectors (
 -- 2.31 node it stands for (entry_type_id). global_id is the u64 worldGlobalNodeID as a signed 64-bit integer,
 -- NULL where the game stores 0. x, y, z in metres; qi, qj, qk, qr the rotation quaternion; yaw in degrees,
 -- derived from it; sx, sy, sz the scale. variant is the sector variant range the row sits in (0 = always on).
+-- An instanced mesh or destructible has one row per instance: instance_no numbers them within the node (or 2.5
+-- group), and the transform is that instance's. position_source says where the transform comes from: row (the
+-- node-data row), instance (the node's own instance transforms) or bounds (the centre of the node's world bounds,
+-- for an instanced occluder, whose instances are not decoded).
 CREATE TABLE nodes (
     id INTEGER PRIMARY KEY, sector_id INTEGER, node_idx INTEGER, row_idx INTEGER, instance_index INTEGER,
     type_id INTEGER, entry_type_id INTEGER, global_id INTEGER,
     x REAL, y REAL, z REAL, yaw REAL,
     qi REAL, qj REAL, qk REAL, qr REAL, sx REAL, sy REAL, sz REAL,
     resource_id INTEGER, appearance_id INTEGER, template_id INTEGER, entity_appearance_id INTEGER,
-    debug_id INTEGER, variant INTEGER, streaming_distance REAL
+    debug_id INTEGER, variant INTEGER, streaming_distance REAL, instance_no INTEGER, position_source TEXT
 );
 
 -- What a node references, keyed by sector and node index (a node placed by several rows lists it once).
@@ -52,7 +56,7 @@ SELECT n.id, sp.text AS sector, n.node_idx, n.row_idx, n.instance_index,
        t.text AS type, et.text AS entry_type, n.global_id,
        n.x, n.y, n.z, n.yaw, n.qi, n.qj, n.qk, n.qr, n.sx, n.sy, n.sz,
        r.text AS resource, a.text AS appearance, tp.text AS template, ea.text AS entity_appearance,
-       d.text AS debug_name, n.variant, n.streaming_distance
+       d.text AS debug_name, n.variant, n.streaming_distance, n.instance_no, n.position_source
 FROM nodes n
 JOIN sectors s ON s.id = n.sector_id
 JOIN strings sp ON sp.id = s.path_id
