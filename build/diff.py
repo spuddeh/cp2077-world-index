@@ -212,8 +212,8 @@ def main():
     con.commit()
     con.execute("VACUUM")
     con.close()
-    print(f"{name}: {dict(counts)}; sectors only in {old_meta['game_version']}: {only_old}, "
-          f"only in {new_meta['game_version']}: {only_new}; {os.path.getsize(path) / 1e6:,.0f} MB")
+    print(f"{name}: {dict(counts)}; sectors only in {label(old_meta)}: {only_old}, "
+          f"only in {label(new_meta)}: {only_new}; {os.path.getsize(path) / 1e6:,.0f} MB")
 
 
 if __name__ == "__main__":
