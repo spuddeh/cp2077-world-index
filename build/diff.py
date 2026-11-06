@@ -204,6 +204,7 @@ def main():
     con.executemany("INSERT INTO placements VALUES (" + ",".join("?" * 23) + ")", rows)
     con.executemany("INSERT INTO strings VALUES (?,?)", ((i, t) for t, i in strings.items()))
     meta = {"old_game": old_meta["game_version"], "new_game": new_meta["game_version"],
+            "old_edition": old_meta["edition"], "new_edition": new_meta["edition"],
             "old_build": old_meta.get("build_commit", ""), "new_build": new_meta.get("build_commit", ""),
             "built_utc": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
             "move_limit_m": str(MOVE_LIMIT), "counts": json.dumps(counts)}

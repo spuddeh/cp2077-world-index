@@ -71,7 +71,7 @@ CREATE INDEX smart_members_hash ON smart_object_members (hash);
 """
 TABLED = {".mappins", ".poimappins", ".areas", ".loot", ".devices", ".psrep", ".locopaths", ".streamingquerydata", ".traffic_persistent",
           ".lane_polygons", ".lane_connections", ".traffic_collisions", ".null_areas", ".streamingworld", ".streamingsector_inplace",
-          ".cookedprefab", ".acousticdata", ".smartobjects", ".streamingsector", ".streamingblock"}
+          ".cookedprefab", ".acousticdata", ".smartobjects", ".streamingsector", ".streamingblock", ".spatial_representation"}
 
 
 def fnv(text):
