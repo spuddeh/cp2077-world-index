@@ -89,7 +89,7 @@ if (notVanilla.length > 0) {
     throw new Error(notVanilla.length + " sectors are not served by the game's own archives, first " + notVanilla[0].path);
 }
 logger.Info("sectors " + descriptors.length + ": " + descriptors.filter(function (d) { return d.block === null; }).length
-    + " listed by no block; " + modded + " sector paths served only by mod archives were left out");
+    + " listed by no block; " + modded + " loaded sector paths are not in this edition's game files and were left out");
 
 // The sectors this run reads, and the part file each lands in.
 const todo = ONLY === "extra"
