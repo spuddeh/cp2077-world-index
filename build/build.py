@@ -102,6 +102,8 @@ def main():
     ap.add_argument("--game", required=True)
     ap.add_argument("--src", required=True)
     ap.add_argument("--out", required=True)
+    ap.add_argument("--edition", default="ep1", choices=["ep1", "base"],
+                    help="ep1: the copy a game with Phantom Liberty loads; base: the copy a game without it loads")
     a = ap.parse_args()
     os.makedirs(a.out, exist_ok=True)
     core, full = Db(os.path.join(a.out, "core.db")), Db(os.path.join(a.out, "full.db"))
@@ -220,7 +222,7 @@ def main():
     print("nodes no row places", json.dumps(unplaced, sort_keys=True), flush=True)
     print("accepted while reading", json.dumps(read_errors, indent=1), flush=True)
     print("instance decode errors", json.dumps(analyze_errors), flush=True)
-    meta = {"game_version": a.game, "schema_version": str(SCHEMA_VERSION), "audit": json.dumps(audit),
+    meta = {"game_version": a.game, "edition": a.edition, "schema_version": str(SCHEMA_VERSION), "audit": json.dumps(audit),
             "nodes_no_row_places": json.dumps(unplaced, sort_keys=True), "read_errors": json.dumps(read_errors),
             "built_utc": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
             "build_commit": git_commit() or "", "sectors_read": str(len(read)),

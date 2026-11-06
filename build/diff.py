@@ -159,7 +159,8 @@ def main():
     old_meta, old = read(a.old)
     new_meta, new = read(a.new)
     os.makedirs(a.out, exist_ok=True)
-    name = f"diff-{old_meta['game_version']}-{new_meta['game_version']}.db"
+    label = lambda m: m["game_version"] + "-" + m["edition"]
+    name = f"diff-{label(old_meta)}-{label(new_meta)}.db"
     path = os.path.join(a.out, name)
     if os.path.exists(path):
         os.remove(path)

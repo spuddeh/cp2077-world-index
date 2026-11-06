@@ -21,6 +21,7 @@
 
 // ---- CONFIG ----
 const GAME  = "2.5";        // the game version the loaded archives belong to; names the output folder
+const EDITION = "ep1";      // "ep1": the copy a game with Phantom Liberty loads; "base": the copy a game without it loads
 const FROM  = 0, TO = 25;    // the first and last part-<NN> file this run writes
 const ONLY  = null;         // "extra": the main menu and unlisted sectors, into part-extra-<NN>.ndjson;
                             // "foliage": every sector's foliage plants, into foliage-<NN>.ndjson
@@ -34,15 +35,18 @@ const BLOCKS = [
     { name: "ep1", path: PRE + "ep1" + BS + "blocks" + BS + "all.streamingblock" },
     { name: "main_menu", path: ["base", "worlds", "04_main_menu", "_compiled", "default", "blocks", "all.streamingblock"].join(BS) }
 ];
-const OUT = "world-index/" + GAME + "/";
+const OUT = "world-index/" + GAME + "-" + EDITION + "/";
+const COPY = EDITION === "base" ? "basegame" : null;
 
-function load(p) { return JSON.parse(wkit.GameFileToJson(wkit.GetFileFromArchive(p, OpenAs.GameFile))); }
+function fileOf(p) { return EDITION === "base" ? wkit.BaseGameFile(p) : wkit.GetFileFromArchive(p, OpenAs.GameFile); }
+function load(p) { return JSON.parse(wkit.GameFileToJson(fileOf(p))); }
 function v3(v) { return [v.X, v.Y, v.Z]; }
 function pad(n) { return (n < 10 ? "0" : "") + n; }
 
 const descriptors = [];
 const seen = new Set();
 for (const b of BLOCKS) {
+    if (EDITION === "base" && b.name === "ep1") { continue; }
     for (const d of load(b.path).Data.RootChunk.descriptors) {
         const path = d.data.DepotPath.$value;
         if (seen.has(path)) { continue; }
@@ -66,7 +70,7 @@ let modded = 0;
 for (const f of wkit.GetArchiveFiles()) {
     const path = f.FileName ?? f.Name;
     if (!path || !path.endsWith(".streamingsector") || seen.has(path)) { continue; }
-    if (!vanilla(f)) { modded++; continue; }
+    if (EDITION === "base" ? !wkit.BaseGameFile(path) : !vanilla(f)) { modded++; continue; }
     seen.add(path);
     descriptors.push({ path: path, block: null, category: null, level: null, min: null, max: null, prefab: null, variants: [] });
 }
@@ -78,7 +82,9 @@ for (const f of wkit.GetArchiveFiles()) {
     const path = f.FileName ?? f.Name;
     if (path && path.endsWith(".streamingsector")) { byPath.set(path, f); }
 }
-const notVanilla = descriptors.filter(function (d) { return !byPath.has(d.path) || !vanilla(byPath.get(d.path)); });
+const notVanilla = EDITION === "base"
+    ? descriptors.filter(function (d) { return !wkit.BaseGameFile(d.path); })
+    : descriptors.filter(function (d) { return !byPath.has(d.path) || !vanilla(byPath.get(d.path)); });
 if (notVanilla.length > 0) {
     throw new Error(notVanilla.length + " sectors are not served by the game's own archives, first " + notVanilla[0].path);
 }
@@ -103,7 +109,7 @@ const started = Date.now();
 for (let k = first; k < last; k++) {
     const path = todo[k].path;
     let text;
-    try { text = ONLY === "foliage" ? wkit.WorldIndexFoliage(path) : wkit.WorldIndexSector(path); }
+    try { text = ONLY === "foliage" ? wkit.WorldIndexFoliage(path, COPY) : wkit.WorldIndexSector(path, COPY); }
     catch (e) { text = JSON.stringify({ path: path, error: String(e) }); }
     const parsed = JSON.parse(text);
     if (parsed.error || parsed.found === false) {
