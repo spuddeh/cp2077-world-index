@@ -57,6 +57,13 @@ python build/diff.py --old out/2.31 --new out/2.5 --out out
 
 Each command takes about 3 minutes. `build.py` writes `foliage.db` only when the extract has `foliage-*.ndjson` files.
 
+`verify/raw_check.py` reads every sector straight from the game's `.archive` files, with no WolvenKit code, and compares
+every node class and node-data row with an extract. It takes about a minute and needs only Python and the game:
+
+```
+python verify/raw_check.py --game-dir "<game install>" --src <extract>/2.5
+```
+
 ## What this contains, and whose it is
 
 The world data is Cyberpunk 2077's, so it belongs to CD PROJEKT RED. This repository is an extraction of

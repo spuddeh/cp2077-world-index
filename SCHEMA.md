@@ -213,6 +213,10 @@ WHERE resource_id = (SELECT id FROM foliage.strings WHERE text LIKE '%atriplex_l
 - **Most node properties.** A placement has its transform, class, mesh or template, appearance and debug name, and
   `node_refs` has the TweakDB records, resources, NodeRefs and ids a node holds. Other values, such as a light's
   colour or a trigger's settings, are in the sector files only.
+- **Two kinds of reference on 2.5 cooked nodes.** The `.acousticdata` link of each cooked acoustic entry and the
+  NodeRefs of cooked cable entries are not in `node_refs`. A cooked mesh or decal's resource is in `resource`.
+- **The base game's copy of a sector Phantom Liberty replaces.** Where both ship a sector, the index holds the copy a
+  game with Phantom Liberty loads. 21,603 sectors of 2.5 have both.
 - **Most node-data row fields.** Streaming reference points, node flags, streaming priority, data group and proxy
   mesh id are not columns.
 - **World data outside `.streamingsector` files.** Traffic (`.traffic_persistent`, `.lane_*`), `.mappins`,
