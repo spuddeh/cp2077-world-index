@@ -21,6 +21,7 @@ ap = argparse.ArgumentParser()
 ap.add_argument("--game-dir", required=True)
 ap.add_argument("--src", required=True)
 ap.add_argument("--limit", type=int)
+ap.add_argument("--edition", default="ep1", choices=["ep1", "base"])
 ap.add_argument("--tamper", action="store_true")
 args = ap.parse_args()
 root, limit = args.game_dir, args.limit
@@ -126,7 +127,7 @@ def f32(v):
 
 
 archives = []
-for folder in ("content", "ep1"):
+for folder in ("content", "ep1") if args.edition == "ep1" else ("content",):
     for path in sorted(glob.glob(f"{root}/archive/pc/{folder}/*.archive")):
         name = os.path.basename(path)
         if not (name.startswith("lang_") or name.startswith("audio_")):

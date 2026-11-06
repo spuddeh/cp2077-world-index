@@ -31,11 +31,15 @@ function fileOf(path) {
     if (f && !vanilla(f)) { throw new Error("served by a mod archive: " + path); }
     return f;
 }
+// WolvenKit fails at random on a package holding many identical chunks; a read that succeeds is complete.
 function read(path) {
     const f = fileOf(path);
     if (!f) { return null; }
-    const text = wkit.GameFileToJson(f);
-    return text ? JSON.parse(text).Data : null;
+    for (let attempt = 0; attempt < 10; attempt++) {
+        const text = wkit.GameFileToJson(f);
+        if (text) { return JSON.parse(text).Data; }
+    }
+    throw new Error("not readable after 10 attempts");
 }
 
 // Plain data: handles become their object, and a type name stays only where the class says something.
@@ -124,7 +128,7 @@ if (PART === "single") {
     const paths = [];
     for (const f of wkit.GetArchiveFiles()) {
         const p = String(f.FileName ?? f.Name ?? "");
-        if (p.endsWith(EXT) && p.indexOf(BS + "worlds" + BS) >= 0) { paths.push(p); }
+        if (p.endsWith(EXT) && p.indexOf(BS + "worlds" + BS) >= 0 && (EDITION !== "base" || wkit.BaseGameFile(p))) { paths.push(p); }
     }
     paths.sort();
     logger.Info(PART + " files " + paths.length);
