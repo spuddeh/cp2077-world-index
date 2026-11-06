@@ -9,9 +9,8 @@ and every other node that is not visual or physical. `full.db` holds meshes, dec
 collision and the like. Each placement is in exactly one of them. `foliage.db` holds the plants of the foliage
 nodes in `full.db`: one row per plant, `type` `worldFoliageNode`, with the node's mesh, `node_idx` and `row_idx`,
 `instance_no` the plant's number and `position_source` `instance`. It has no `global_id`, `debug_id` or
-`streaming_distance`, and its `node_refs` and `outlines` tables are empty. Plant scale is stored as the game has it,
-and a few thousand plants are below 0.001. The 95 foliage nodes of `exterior_0_0_0_0` have no plants, so they are
-in `full.db` only. Open the others with `ATTACH`:
+`streaming_distance`, and its `node_refs` and `outlines` tables are empty. Plant scale is stored as the file has it:
+22,426 plants have a negative scale and about 4,100 are below 0.001. Open the others with `ATTACH`:
 
 ```sql
 ATTACH 'full.db' AS full;
@@ -23,7 +22,9 @@ ATTACH 'foliage.db' AS foliage;
 ### `meta`
 
 `key`, `value`: `game_version`, `schema_version`, `built_utc`, `build_commit`, `sectors_read`, `sectors_listed`,
-`database` (`core`, `full` or `foliage`).
+`database` (`core`, `full` or `foliage`), `audit` (JSON: what the read could not carry through, summed over the
+world; every count is 0 in a clean build), `nodes_no_row_places` (JSON: count per class), `read_errors` (JSON: per
+sector, each field stored with an older type than the reader expects).
 
 ### `strings`
 
@@ -33,8 +34,7 @@ holds its `id`. Each database has its own `strings`, so ids do not match between
 ### `sectors`
 
 One row per streaming sector that has a placement in this database. Every `.streamingsector` in the game's
-archives is read, apart from the ones under [Known gaps](#known-gaps): the three worlds' streaming blocks list all
-but a few, and those few are kept with `block` NULL.
+archives is read: the three worlds' streaming blocks list all but a few, and those few are kept with `block` NULL.
 
 | Column | |
 | --- | --- |
@@ -50,9 +50,11 @@ but a few, and those few are kept with `block` NULL.
 
 ### `nodes`
 
-One row per placement. Most placements are a row of a sector's node data. An instanced mesh or destructible holds
-many copies of one mesh: it has one row here per copy, all with the same `node_idx` and `row_idx`, numbered by
-`instance_no`.
+One row per placement. Most placements are a row of a sector's node data. An instanced mesh, destructible or
+occluder holds many copies: it has one row here per copy, numbered by `instance_no`. Each node-data row of a
+destructible places its own copies, so `row_idx`, `global_id` and `variant` belong to that copy. The copies of an
+instanced mesh or occluder are all under the first row of the node or group; any further row of it has a placement
+with `position_source` `none`, so every node-data row of a sector is in the index.
 
 | Column | |
 | --- | --- |
@@ -72,12 +74,11 @@ many copies of one mesh: it has one row here per copy, all with the same `node_i
 | `debug_id` | the node's debug name |
 | `variant` | the sector variant range the row sits in; 0 is always on |
 | `streaming_distance` | metres |
-| `instance_no` | the copy's number within its instanced node (or 2.5 group); NULL for anything else |
-| `position_source` | `row` (the node-data row), `instance` (the instanced node's own copy transforms), `bounds` (the centre of the node's world bounds) or `none` (no position in the files: `x`, `y`, `z` are NULL) |
+| `instance_no` | the copy's number within its node-data row; NULL for anything else |
+| `position_source` | `row` (the node-data row), `instance` (the instanced node's own copy transforms) or `none` (a further row of an instanced mesh or occluder, at the origin: `x`, `y`, `z` are NULL) |
 
-A 2.5 instanced mesh group's own node-data row sits at the origin; its copies' real positions are what the
-`instance` rows hold. Instanced occluders (about 12,000 per version) are `none`: their copies are not decoded and
-their world bounds are empty.
+An instanced mesh or occluder's own node-data row sits at the origin; its copies' real positions are what the
+`instance` rows hold. An occluder copy's rotation and scale come from its stored world matrix.
 
 `global_id` is an unsigned 64-bit hash stored as a signed 64-bit integer, because SQLite integers are signed.
 To look one up from its unsigned form, subtract 2^64 when it is 2^63 or more; do it before the value reaches
@@ -207,12 +208,20 @@ FROM foliage.nodes
 WHERE resource_id = (SELECT id FROM foliage.strings WHERE text LIKE '%atriplex_low.mesh');
 ```
 
-## Known gaps
+## What the index does not hold
 
-- **Unread sectors.** Three sectors cannot be read in either version, and one more in 2.31. Nothing from them is in
-  the index, so `meta` has `sectors_read` below `sectors_listed`:
-  `exterior_-17_21_0_0`, `exterior_-21_-1_0_0`, `exterior_-23_1_4_0`, and in 2.31 `ep1\exterior_-40_-38_0_0`.
-- **Instanced occluders.** About 12,000 per version have `position_source` `none` and NULL `x`, `y`, `z`.
+- **Most node properties.** A placement has its transform, class, mesh or template, appearance and debug name, and
+  `node_refs` has the TweakDB records, resources, NodeRefs and ids a node holds. Other values, such as a light's
+  colour or a trigger's settings, are in the sector files only.
+- **Most node-data row fields.** Streaming reference points, node flags, streaming priority, data group and proxy
+  mesh id are not columns.
+- **World data outside `.streamingsector` files.** Traffic (`.traffic_persistent`, `.lane_*`), `.mappins`,
+  `.poimappins`, `.loot`, `.devices`, `.areas`, `.null_areas`, `.spatial_representation`, `.location`, `.cminimap`,
+  `.smartobjects`, `.streamingsector_inplace` and `.cookedprefab` files.
+- **Three 2.31 device fields.** In `exterior_-17_21_0_0`, `exterior_-21_-1_0_0` and `exterior_-23_1_4_0` a skill check
+  field stored with a class that no longer exists is empty. `meta` `read_errors` names each one.
+- **Anything a save, a quest or a mod changes.** A node in an off-by-default `variant` range is listed with that
+  range; whether it exists in a game depends on the quest state.
 
 # The diff between two versions
 

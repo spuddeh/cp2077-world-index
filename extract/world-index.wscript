@@ -12,12 +12,12 @@
 //   foliage-<NN>.ndjson, errors-foliage-<NN>.json      an ONLY = "foliage" run: each sector's foliage plants
 //                        (wkit.WorldIndexFoliage), one line per sector that has any, for build.py's foliage.db
 // A run writes the part files FROM to TO. Each file is written as soon as its sectors are read, so a run cut
-// short keeps every file it finished; run the rest by setting FROM. A whole game is 53 files: 2.5 reads about
-// 30 files in 15 minutes, 2.31 (read through the 2.31 helper) about 26 in 27 minutes, against the 30-minute cap.
+// short keeps every file it finished; run the rest by setting FROM. A whole game is 53 files: 2.5 reads all of them
+// in 26 minutes, 2.31 (read through the 2.31 helper) about 17 per 29 minutes, against the 30-minute cap.
 // ONLY = "extra" reads just the main menu sectors and the unlisted ones into part-extra-<NN>.ndjson, for adding them to
 // an extract made with the two Night City blocks alone.
 //
-// A foliage run covers 2.31 at about 18 files in 19 minutes. Files 36 onward hold no foliage and read faster.
+// A foliage run takes as long as the main run. Files 36 onward hold no foliage.
 
 // ---- CONFIG ----
 const GAME  = "2.5";        // the game version the loaded archives belong to; names the output folder

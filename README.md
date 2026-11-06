@@ -4,7 +4,7 @@ What is placed in Night City and where: every node in every streaming sector, wi
 entity template, mesh, `globalNodeId` and the TweakDB records it references, as SQLite databases built
 once per game version.
 
-**Status:** built for game 2.31 and 2.5, schema version 5. No database is released yet.
+**Status:** built for game 2.31 and 2.5, schema version 6. Every sector of both versions is read, and each row, position, rotation, scale and copy count has been compared with a second read of the same files. No database is released yet.
 
 ## Game truth only
 
@@ -31,16 +31,16 @@ Sizes are game 2.5, raw and under zstd level 19:
 
 | File | Holds | Placements | Raw | zstd |
 | --- | --- | --- | --- | --- |
-| `core.db` | entities, devices, smart objects, AI spots, markers, triggers and areas, community spawns, and every TweakDB reference | 703,821 | 308 MB | 71 MB |
-| `full.db` | everything else: meshes, decals, lights, foliage nodes, water, sound and the rest | 12,421,882 | 2.0 GB | 450 MB |
-| `foliage.db` | optional: every plant of every foliage node, one row each | 10,281,911 | 1.7 GB | 523 MB |
+| `core.db` | entities, devices, smart objects, AI spots, markers, triggers and areas, community spawns, and every TweakDB reference | 705,194 | 308 MB | 71 MB |
+| `full.db` | everything else: meshes, decals, lights, foliage nodes, water, sound and the rest | 12,462,383 | 2.0 GB | 452 MB |
+| `foliage.db` | optional: every plant of every foliage node, one row each | 10,309,405 | 1.7 GB | 524 MB |
 
 `core.db` answers most questions alone. Open `full.db` or `foliage.db` beside it with `ATTACH` when a query
 needs a mesh node or a plant. A separate Release holds the differences between two game versions:
-`diff-2.31-2.5.db`, 2.2 GB, 385 MB under zstd.
+`diff-2.31-2.5.db`, 2.2 GB, 386 MB under zstd.
 
 Any SQLite client reads them, with no other tool needed. [SCHEMA.md](SCHEMA.md) describes every table and
-column and has example queries. Its [Known gaps](SCHEMA.md#known-gaps) section lists what the index does not hold.
+column and has example queries. [What the index does not hold](SCHEMA.md#what-the-index-does-not-hold) lists what is left out.
 
 ## Building
 
