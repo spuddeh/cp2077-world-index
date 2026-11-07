@@ -41,6 +41,9 @@ CREATE TABLE null_area_blockades (world TEXT, idx INTEGER, data TEXT);
 CREATE TABLE sector_inplace (path TEXT, kind TEXT, resource TEXT);
 CREATE TABLE cooked_prefabs (path TEXT, kind TEXT, resource TEXT);
 CREATE TABLE acoustic_cells (path TEXT, idx INTEGER, sector INTEGER, node_bytes INTEGER);
+CREATE TABLE community_entries (path TEXT, entry INTEGER, crowd INTEGER, name TEXT, character TEXT, spawn_in_view TEXT, initializers TEXT);
+CREATE TABLE community_periods (path TEXT, entry INTEGER, phase INTEGER, period INTEGER, phase_name TEXT, always_spawned TEXT, appearances TEXT,
+    hour TEXT, quantity INTEGER, is_sequence INTEGER, markings TEXT, spot_node_refs TEXT, categories TEXT);
 """
 INDEXES = """
 CREATE INDEX files_ext ON files (extension);
@@ -60,6 +63,10 @@ CREATE INDEX inplace_resource ON sector_inplace (resource);
 CREATE INDEX prefab_path ON cooked_prefabs (path);
 CREATE INDEX prefab_resource ON cooked_prefabs (resource);
 CREATE INDEX acoustic_path ON acoustic_cells (path);
+CREATE INDEX community_path ON community_entries (path);
+CREATE INDEX community_name ON community_entries (name);
+CREATE INDEX community_character ON community_entries (character);
+CREATE INDEX community_periods_path ON community_periods (path, entry);
 """
 SMART_SCHEMA = """
 CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT);
@@ -71,7 +78,7 @@ CREATE INDEX smart_members_hash ON smart_object_members (hash);
 """
 TABLED = {".mappins", ".poimappins", ".areas", ".loot", ".devices", ".psrep", ".locopaths", ".streamingquerydata", ".traffic_persistent",
           ".lane_polygons", ".lane_connections", ".traffic_collisions", ".null_areas", ".streamingworld", ".streamingsector_inplace",
-          ".cookedprefab", ".acousticdata", ".smartobjects", ".streamingsector", ".streamingblock", ".spatial_representation"}
+          ".cookedprefab", ".acousticdata", ".smartobjects", ".streamingsector", ".streamingblock", ".spatial_representation", ".community"}
 
 
 def fnv(text):
@@ -139,8 +146,15 @@ def main():
     counts = collections.Counter()
 
     index = archive_index(a.game_dir, a.edition)
+    for part in glob.glob(os.path.join(src, "mod-served-*.json")):
+        with open(part, encoding="utf-8") as f:
+            shipped = [p for p in json.load(f) if fnv(p) in index]
+        if shipped:
+            raise SystemExit(f"{len(shipped)} files the game ships were read as a mod's copy, first {shipped[0]}: unload that mod and extract again")
+    community_parts = sorted(glob.glob(os.path.join(src, "community-*.ndjson")))
     with open(os.path.join(src, "filelist.json"), encoding="utf-8") as f:
         listed = json.load(f)
+    listed += [r["path"] for part in community_parts for r in lines(part)]
     rows = []
     for p in listed:
         entry = index.get(fnv(p))
@@ -232,6 +246,21 @@ def main():
         for r in lines(part):
             counts["acoustic files"] += 1
             c.executemany("INSERT INTO acoustic_cells VALUES (?,?,?,?)", [(r["path"], k, e["sector"], e["bytes"]) for k, e in enumerate(r["cells"])])
+
+    for part in community_parts:
+        for r in lines(part):
+            counts["community files"] += 1
+            t = r["template"] or {}
+            for crowd, key in ((0, "entries"), (1, "crowdEntries")):
+                for e, entry in enumerate(t.get(key) or []):
+                    counts["community entries"] += 1
+                    c.execute("INSERT INTO community_entries VALUES (?,?,?,?,?,?,?)", (r["path"], e, crowd, entry.get("entryName"), entry.get("characterRecordId"), entry.get("spawnInView"), dumps(entry.get("initializers"))))
+                    for ph, phase in enumerate(entry.get("phases") or []):
+                        for pe, period in enumerate(phase.get("timePeriods") or []):
+                            counts["community periods"] += 1
+                            c.execute("INSERT INTO community_periods VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)", (
+                                r["path"], e, ph, pe, phase.get("phaseName"), phase.get("alwaysSpawned"), dumps(phase.get("appearances")),
+                                period.get("hour"), period.get("quantity"), period.get("isSequence"), dumps(period.get("markings")), dumps(period.get("spotNodeRefs")), dumps(period.get("categories"))))
 
     smart_parts = sorted(glob.glob(os.path.join(src, "smartobjects-*.ndjson")))
     if smart_parts:

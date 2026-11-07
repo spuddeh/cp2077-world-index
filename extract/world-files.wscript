@@ -5,6 +5,7 @@
 //   <world>-<kind>.ndjson            one line per element of the world's single files
 //   <kind>-<NN>.ndjson               one line per per-area file, CHUNK files per NDJSON
 //   errors-<PART>.json               the files of this run that could not be read, with the reason
+//   mod-served-<PART>.json           the paths of this run a mod archive serves; build_world.py refuses any the game also ships
 // Baked and opaque files (.gidata, .envprobe, .geometry_cache, .lights, .cminimap) are in the catalogue only.
 // A run is one PART. A per-area part writes files FROM to the end, each as soon as it is read, so a run cut short at the
 // 30-minute cap keeps every file it finished; run the rest by setting FROM.
@@ -12,7 +13,7 @@
 // ---- CONFIG ----
 const GAME    = "2.5";      // the game version the loaded archives belong to; names the output folder
 const EDITION = "ep1";      // "ep1": the copy a game with Phantom Liberty loads; "base": the copy a game without it loads
-const PART    = "single";   // single, inplace, prefab, acoustic or smartobjects
+const PART    = "single";   // single, inplace, prefab, acoustic, smartobjects or community
 const FROM    = 0;          // the first NDJSON file of a per-area part
 const CHUNK   = 200;        // per-area files per NDJSON
 // ----------------
@@ -124,13 +125,21 @@ if (PART === "single") {
         });
     }
 } else {
-    const EXT = { inplace: ".streamingsector_inplace", prefab: ".cookedprefab", acoustic: ".acousticdata", smartobjects: ".smartobjects" }[PART];
-    const paths = [];
+    const EXT = { inplace: ".streamingsector_inplace", prefab: ".cookedprefab", acoustic: ".acousticdata", smartobjects: ".smartobjects", community: ".community" }[PART];
+    const paths = [], modServed = [];
     for (const f of wkit.GetArchiveFiles()) {
         const p = String(f.FileName ?? f.Name ?? "");
-        if (p.endsWith(EXT) && p.indexOf(BS + "worlds" + BS) >= 0 && (EDITION !== "base" || wkit.BaseGameFile(p))) { paths.push(p); }
+        if (!p.endsWith(EXT) || (PART !== "community" && p.indexOf(BS + "worlds" + BS) < 0)) { continue; }
+        if (EDITION === "base") {
+            if (wkit.BaseGameFile(p)) { paths.push(p); }
+        } else if (vanilla(f)) {
+            paths.push(p);
+        } else {
+            modServed.push(p);
+        }
     }
     paths.sort();
+    wkit.SaveToRaw(OUT + "mod-served-" + PART + ".json", JSON.stringify(modServed.sort()));
     logger.Info(PART + " files " + paths.length);
     const pad = function (n) { return (n < 10 ? "0" : "") + n; };
     let lines = [];
@@ -140,6 +149,7 @@ if (PART === "single") {
             const embedded = (d.EmbeddedFiles || []).map(function (e) { return clean(e.FileName); });
             if (PART === "inplace") { return { path: paths[k], resources: clean(r.inplaceResources), embedded: embedded }; }
             if (PART === "prefab") { return { path: paths[k], dependencies: clean(r.dependencies), embedded: embedded }; }
+            if (PART === "community") { return { path: paths[k], template: clean(r.communityTemplate) }; }
             if (PART === "acoustic") {
                 return { path: paths[k], cells: r.cells.map(function (c) { return { sector: c.sectorId, bytes: c.nodes && c.nodes.Bytes ? c.nodes.Bytes.length : 0 }; }) };
             }
