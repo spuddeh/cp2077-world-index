@@ -4,9 +4,11 @@ What is placed in Night City and where: every node in every streaming sector, wi
 entity template, mesh, `globalNodeId` and the TweakDB records it references, and the world's other files, such as
 mappins, loot, devices and traffic, as SQLite databases built per game version and edition.
 
-**Status:** built for game 2.31 and 2.5, each with and without Phantom Liberty, schema version 6. Every sector of all
+**Status:** built for game 2.31 and 2.5, each with and without Phantom Liberty, schema version 7. Every sector of all
 four is read, and each node's class and each node-data row has been compared with the game's archive bytes, with no
-differences. No database is released yet.
+differences. Rows, resources, appearances, instanced copies and collision actors also match
+[Akiway's node exports](https://github.com/Akiway/ArchiveXL-Sector-Updater), a separate read of the same files. No database is
+released yet.
 
 ## Editions
 
@@ -38,7 +40,9 @@ game changed, and what each derived set needs to follow.
 - every plant of a foliage node, or the plants near a point
 - what a container rolls, where a mappin stands, which lanes a road has
 - what Phantom Liberty changes in a sector of the base game
-- every file under a `worlds` folder, with its size and hash
+- every file under a `worlds` folder and every `.community` file, with its size and hash
+- which characters a community file spawns, when and where
+- every collision actor near a point
 
 ## Files
 
@@ -47,10 +51,11 @@ under zstd level 19:
 
 | File | Holds | Placements | Raw | zstd |
 | --- | --- | --- | --- | --- |
-| `core.db` | entities, devices, smart objects, AI spots, markers, triggers and areas, community spawns, and every TweakDB reference | 705,194 | 308 MB | 71 MB |
-| `full.db` | everything else: meshes, decals, lights, foliage nodes, water, sound and the rest | 12,462,383 | 2.0 GB | 454 MB |
+| `core.db` | entities, devices, smart objects, AI spots, markers, triggers and areas, community spawns, and every TweakDB reference | 705,194 | 315 MB | 72 MB |
+| `full.db` | everything else: meshes, decals, lights, foliage nodes, water, sound and the rest | 12,462,383 | 2.1 GB | 457 MB |
+| `collisions.db` | optional: every actor of every collision and foliage destruction node | 8,576,699 | 905 MB | 253 MB |
 | `foliage.db` | optional: every plant of every foliage node, one row each | 10,309,405 | 1.7 GB | 524 MB |
-| `world.db` | the world's files other than sectors: mappins, areas, loot, devices, persistent state, roads, traffic, and every file under a `worlds` folder | | 616 MB | 36 MB |
+| `world.db` | the world's files other than sectors: mappins, areas, loot, devices, persistent state, roads, traffic, communities, and every file under a `worlds` folder | | 649 MB | 38 MB |
 | `smartobjects.db` | optional: the `.smartobjects` files | | 1.2 GB | 26 MB |
 
 `core.db` answers most questions alone. Open the others beside it with `ATTACH` when a query needs a mesh node, a
@@ -69,14 +74,15 @@ does not ship, and both call `wkit.BaseGameFile` for the `base` edition, so neit
 archives must be the game's own: the scripts stop on a sector or world file a mod archive serves.
 
 ```
-python build/build.py --game 2.5 --edition ep1 --src <extract>/2.5-ep1 --out out/2.5-ep1
+python build/build.py --game 2.31 --edition ep1 --src <extract>/2.31-ep1 --out out/2.31-ep1
+python build/build.py --game 2.5 --edition ep1 --names-from out/2.31-ep1/full.db --src <extract>/2.5-ep1 --out out/2.5-ep1
 python build/build_world.py --game 2.5 --edition ep1 --game-dir "<game install>" --src <extract>/2.5-ep1/world --out out/2.5-ep1
 python build/diff.py --old out/2.31-ep1 --new out/2.5-ep1 --out out
 python build/diff.py --old out/2.5-base --new out/2.5-ep1 --out out
 ```
 
 `build.py` and `diff.py` take about 3 minutes each and `build_world.py` about 25 seconds. `build.py` writes `foliage.db`
-only when the extract has `foliage-*.ndjson` files.
+only when the extract has `foliage-*.ndjson` files. `--names-from` names the appearance hashes a 2.5 cooked entry keeps.
 
 `verify/raw_check.py` reads every sector straight from the game's `.archive` files, with no WolvenKit code, and compares
 every node class and node-data row with an extract. It takes about a minute and needs only Python and the game:

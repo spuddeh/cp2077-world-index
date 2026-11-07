@@ -4,8 +4,9 @@ Each edition of each game version is one folder of databases, named `<version>-<
 `2.31-ep1`, `2.31-base`. `ep1` is the world a game with Phantom Liberty loads and `base` the world a game without it
 loads, the names the game's own `worldStreamingDataGroup` uses. A sector both ship can differ between them.
 
-`core.db`, `full.db` and the optional `foliage.db` use this schema. `world.db` and the optional `smartobjects.db`
-hold the world's files other than sectors and are described under [World files](#world-files). Any SQLite client opens them: `sqlite3`, DB Browser for
+`core.db`, `full.db` and the optional `foliage.db` use this schema. `collisions.db` is described under
+[Collision actors](#collision-actors), and `world.db` and the optional `smartobjects.db`, which hold the world's files other
+than sectors, under [World files](#world-files). Any SQLite client opens them: `sqlite3`, DB Browser for
 SQLite, Python's `sqlite3` module. Every value is stored as the game stores it, in metres and degrees, with no
 encoding to undo.
 
@@ -28,7 +29,7 @@ ATTACH 'foliage.db' AS foliage;
 
 `key`, `value`: `game_version`, `edition` (`ep1` or `base`), `schema_version`, `built_utc`, `build_commit`, `sectors_read`, `sectors_listed`,
 `database` (`core`, `full` or `foliage`), `audit` (JSON: what the read could not carry through, summed over the
-world; every count is 0 in a clean build), `nodes_no_row_places` (JSON: count per class), `read_errors` (JSON: per
+world; every count is 0 in a clean build, including `collisionUnread`), `nodes_no_row_places` (JSON: count per class), `read_errors` (JSON: per
 sector, each field stored with an older type than the reader expects, and each value the reader could not carry).
 
 ### `strings`
@@ -74,7 +75,7 @@ with `position_source` `none`, so every node-data row of a sector is in the inde
 | `qi`, `qj`, `qk`, `qr` | rotation quaternion |
 | `sx`, `sy`, `sz` | scale |
 | `resource_id` | the mesh, or a decal's material |
-| `appearance_id` | the mesh appearance |
+| `appearance_id` | the mesh appearance. A 2.5 cooked entry stores it as a hash; `build.py` names it from every string it knows, and one with no known name stays the hash as a decimal |
 | `template_id`, `entity_appearance_id` | an entity node's `.ent` template and appearance |
 | `debug_id` | the node's debug name |
 | `variant` | the sector variant range the row sits in; 0 is always on |
@@ -98,7 +99,7 @@ What a node references, one row per value. A node placed by several rows lists i
 | Column | |
 | --- | --- |
 | `sector_id`, `node_idx` | the node |
-| `kind` | `tdb` (TweakDB record), `res` (resource path), `ref` (NodeRef), `eid` (entity id hash), `gid` (global node id hash), `name` (CName, community nodes only) |
+| `kind` | `tdb` (TweakDB record), `res` (resource path), `ref` (NodeRef), `eid` (entity id hash), `gid` (global node id hash), `name` (a CName: on a community node any, on other nodes `meshAppearance`, `appearanceName` and `meshFracturedAppearance`) |
 | `path_id` | where in the node the value sits, each array index written as `[]`, e.g. `instanceData.buffer.gameContainerObjectBase.lootTables[]` |
 | `idx` | the array indexes of that path, in order, comma-separated; `''` when the path has none |
 | `value_id` | the value |
@@ -213,6 +214,15 @@ FROM foliage.nodes
 WHERE resource_id = (SELECT id FROM foliage.strings WHERE text LIKE '%atriplex_low.mesh');
 ```
 
+## Collision actors
+
+`collisions.db` holds one row per actor of each collision and foliage destruction node. An actor belongs to its node, or on
+2.5 to its entry, and is listed once, under the first row that places it.
+
+`actors`: `sector_id`, `node_idx`, `row_idx` (join these to `nodes`), `instance_index` (2.5 cooked entry, NULL otherwise),
+`actor_no`, `x`, `y`, `z` (world space, metres), `qi`, `qj`, `qk`, `qr`, `sx`, `sy`, `sz`, `shape_count`. `sectors` is `id`, `path`
+with the same ids as the other databases. `sectors_rtree` is the box around each sector's actors.
+
 ## World files
 
 ### `world.db`
@@ -222,7 +232,7 @@ that can exceed 2^63 are stored as text in their unsigned form. `world` is `03_n
 
 | Table | From | Holds |
 | --- | --- | --- |
-| `files` | the `.archive` indexes | every file under a `worlds` folder: `path`, `extension`, `archive`, `size`, `disk_size`, `sha1`, `in_tables` (1 when its contents are in these databases) |
+| `files` | the `.archive` indexes | every file under a `worlds` folder and every `.community` file: `path`, `extension`, `archive`, `size`, `disk_size`, `sha1`, `in_tables` (1 when its contents are in these databases) |
 | `world_resources` | `.streamingworld` | the world's streaming setup, whole |
 | `mappins` | `.mappins` | `kind` (`cooked`, `gps` or `multi`), `journal_path_hash`, position |
 | `poi_mappins` | `.poimappins` | `entity_id`, `journal_path_hash`, position |
@@ -239,8 +249,10 @@ that can exceed 2^63 are stored as text in their unsigned form. `world` is `03_n
 | `sector_inplace` | `.streamingsector_inplace` | `path`, `kind` (`resource` or `embedded`), `resource` |
 | `cooked_prefabs` | `.cookedprefab` | `path`, `kind` (`dependency` or `embedded`), `resource` |
 | `acoustic_cells` | `.acousticdata` | `path`, `sector`, `node_bytes` (the cell's stored size; its contents are not decoded) |
+| `community_entries` | `.community` | `path`, `entry`, `crowd` (1 for a crowd entry), `name`, `character` (TweakDB record), `spawn_in_view`, `initializers` |
+| `community_periods` | `.community` | `path`, `entry`, `phase`, `period`, `phase_name`, `always_spawned`, `appearances`, `hour`, `quantity`, `is_sequence`, `markings`, `spot_node_refs`, `categories` |
 
-`meta` holds `game_version`, `edition`, `schema_version` (this database's own), `database`, `built_utc`, `build_commit`,
+`meta` holds `game_version`, `edition`, `schema_version` (this database's own version), `database`, `built_utc`, `build_commit`,
 `counts` (JSON) and `read_errors` (JSON: files that could not be read; empty in a clean build).
 
 A `devices` row is not always a placed node. Most `hash` values with no `global_id` in `nodes` belong to
@@ -281,14 +293,15 @@ WHERE a.extension = '.mappins';
 - **Most node properties.** A placement has its transform, class, mesh or template, appearance and debug name, and
   `node_refs` has the TweakDB records, resources, NodeRefs and ids a node holds. Other values, such as a light's
   colour or a trigger's settings, are in the sector files only.
+- **A collision actor's shapes.** `collisions.db` has each actor's transform and shape count; each shape's type, size,
+  preset and materials are in the sector files only.
 - **Most node-data row fields.** Streaming reference points, node flags, streaming priority, data group and proxy
   mesh id are not columns.
 - **Files listed but not decoded.** `.gidata` and `.envprobe` are baked lighting. `.geometry_cache`, `.lights`, `.cminimap`
   and the binary buffer of `.spatial_representation` have no decoder here yet. `files` has each one's path, size and hash.
 - **Files with nothing to decode.** Every `.location` and `.lane_spots` file holds an empty buffer.
 - **Assets stored under a `worlds` folder.** `.mesh`, `.xbm`, `.mi`, `.ent`, `.cfoliage` and the like are in `files` only.
-- **World data outside a `worlds` folder.** `.community` files, for one, are not in `files`; a community node's
-  references are in `node_refs`.
+- **World data outside a `worlds` folder, other than `.community` files.** Scenes, quest phases and the like.
 - **Files whose name is not known.** `files` lists a path from the names the reader knows, so an archive entry with no
   known name is absent. Every sector the streaming blocks list has a known name.
 - **Three device fields.** In `exterior_-17_21_0_0`, `exterior_-21_-1_0_0` and `exterior_-23_1_4_0` a skill check

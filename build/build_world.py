@@ -2,7 +2,7 @@
 
     python build/build_world.py --game 2.5 --edition ep1 --game-dir "<game install>" --src <extract>/2.5-ep1/world --out out/2.5-ep1
 
-world.db holds the world's data outside sector files, and `files`: every file under base\\worlds with its size and
+world.db holds the world's data outside sector files, and `files`: every file under a worlds folder with its size and
 content hash, read from the game's own .archive indexes, so a baked or opaque file that has no table of its own is still
 listed. Values are stored as the game has them. A column named data holds the rest of an element as JSON.
 """
@@ -16,7 +16,7 @@ import sqlite3
 import struct
 import subprocess
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 HERE = os.path.dirname(os.path.abspath(__file__))
 
 SCHEMA = """
