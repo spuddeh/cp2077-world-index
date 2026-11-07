@@ -1,6 +1,11 @@
 # Schema
 
-`core.db`, `full.db` and the optional `foliage.db` use this schema. Any SQLite client opens them: `sqlite3`, DB Browser for
+Each edition of each game version is one folder of databases, named `<version>-<edition>`: `2.5-ep1`, `2.5-base`,
+`2.31-ep1`, `2.31-base`. `ep1` is the world a game with Phantom Liberty loads and `base` the world a game without it
+loads, the names the game's own `worldStreamingDataGroup` uses. A sector both ship can differ between them.
+
+`core.db`, `full.db` and the optional `foliage.db` use this schema. `world.db` and the optional `smartobjects.db`
+hold the world's files other than sectors and are described under [World files](#world-files). Any SQLite client opens them: `sqlite3`, DB Browser for
 SQLite, Python's `sqlite3` module. Every value is stored as the game stores it, in metres and degrees, with no
 encoding to undo.
 
@@ -21,10 +26,10 @@ ATTACH 'foliage.db' AS foliage;
 
 ### `meta`
 
-`key`, `value`: `game_version`, `schema_version`, `built_utc`, `build_commit`, `sectors_read`, `sectors_listed`,
+`key`, `value`: `game_version`, `edition` (`ep1` or `base`), `schema_version`, `built_utc`, `build_commit`, `sectors_read`, `sectors_listed`,
 `database` (`core`, `full` or `foliage`), `audit` (JSON: what the read could not carry through, summed over the
 world; every count is 0 in a clean build), `nodes_no_row_places` (JSON: count per class), `read_errors` (JSON: per
-sector, each field stored with an older type than the reader expects).
+sector, each field stored with an older type than the reader expects, and each value the reader could not carry).
 
 ### `strings`
 
@@ -40,7 +45,7 @@ archives is read: the three worlds' streaming blocks list all but a few, and tho
 | --- | --- |
 | `id` | sector id, the same in every database of a version |
 | `path_id` | the `.streamingsector` path |
-| `world` | the world it belongs to: `03_night_city` (with Phantom Liberty) or `04_main_menu`, the main menu's backdrop, whose positions are not Night City's |
+| `world` | the world it belongs to: `03_night_city` or `04_main_menu`, the main menu's backdrop, whose positions are not Night City's |
 | `block` | the streaming block that lists it: `night_city`, `ep1` (Phantom Liberty) or `main_menu`; NULL for a sector no block lists, which the game never streams |
 | `category` | `Exterior`, `Interior`, `Quest`, `Navigation` or `AlwaysLoaded`; NULL when `block` is NULL |
 | `level` | streaming level |
@@ -208,30 +213,95 @@ FROM foliage.nodes
 WHERE resource_id = (SELECT id FROM foliage.strings WHERE text LIKE '%atriplex_low.mesh');
 ```
 
+## World files
+
+### `world.db`
+
+Every table has the values as the game stores them. A column named `data` holds the rest of the element as JSON. Hashes
+that can exceed 2^63 are stored as text in their unsigned form. `world` is `03_night_city` or `04_main_menu`.
+
+| Table | From | Holds |
+| --- | --- | --- |
+| `files` | the `.archive` indexes | every file under a `worlds` folder: `path`, `extension`, `archive`, `size`, `disk_size`, `sha1`, `in_tables` (1 when its contents are in these databases) |
+| `world_resources` | `.streamingworld` | the world's streaming setup, whole |
+| `mappins` | `.mappins` | `kind` (`cooked`, `gps` or `multi`), `journal_path_hash`, position |
+| `poi_mappins` | `.poimappins` | `entity_id`, `journal_path_hash`, position |
+| `areas` | `.areas` | `entity_id`, position, `radius`, `volume` |
+| `loot` | `.loot` | `node_ref_hash` and each `record` it rolls, in order. `node_ref_hash` is a node's global id in its unsigned form |
+| `devices` | `.devices`, `_init.devices` | `hash`, `class`, position, `parents`, `children`, `init` (1 for the `_init` file) |
+| `persistent_states` | `.psrep` | `cruid`, `class`, `data` |
+| `locomotion_paths` | `.locopaths` | `spline_node_ref`, `data` |
+| `roads`, `road_links` | `.streamingquerydata` | `global_id`, position, `width`, the road's range in `road_links`, spline in `data` |
+| `traffic_lanes` | `.traffic_persistent`, `.lane_polygons`, `.lane_connections` | `node_ref_hash`, lane numbers, `length`, `width`, `max_speed`, `flags`, `sub_graph`, `polygon`, `connections` |
+| `traffic_lane_collisions` | `.traffic_collisions` | `data` |
+| `traffic_neighbor_groups` | `.spatial_representation` | `lanes` |
+| `null_area_collisions`, `null_area_blockades` | `.null_areas` | `area_id`, `data` |
+| `sector_inplace` | `.streamingsector_inplace` | `path`, `kind` (`resource` or `embedded`), `resource` |
+| `cooked_prefabs` | `.cookedprefab` | `path`, `kind` (`dependency` or `embedded`), `resource` |
+| `acoustic_cells` | `.acousticdata` | `path`, `sector`, `node_bytes` (the cell's stored size; its contents are not decoded) |
+
+`meta` holds `game_version`, `edition`, `schema_version` (this database's own), `database`, `built_utc`, `build_commit`,
+`counts` (JSON) and `read_errors` (JSON: files that could not be read; empty in a clean build).
+
+A `devices` row is not always a placed node. Most `hash` values with no `global_id` in `nodes` belong to
+`CommunityProxyPS`, which keeps a community's persistent state.
+
+### `smartobjects.db`
+
+Optional, from `.smartobjects` files. `smart_object_files` (`path`, `box`, `properties`, `transforms`, `sequences`, each JSON),
+`smart_objects` (`path`, `idx`, `class`, `data`), `smart_object_members` (`path`, `hash`, `idx`).
+
+### Example queries
+
+Open them with `ATTACH 'world.db' AS world;`.
+
+What a container rolls, from a global id in its unsigned form:
+
+```sql
+SELECT record FROM world.loot WHERE node_ref_hash = '10001235969088799390' ORDER BY idx;
+```
+
+Mappins near a point:
+
+```sql
+SELECT kind, journal_path_hash, x, y, z FROM world.mappins
+WHERE x BETWEEN -1100 AND -900 AND y BETWEEN 2400 AND 2600;
+```
+
+What Phantom Liberty changed in a base game file, with both editions' `world.db` attached:
+
+```sql
+SELECT a.path, a.size, b.size, a.sha1 = b.sha1 AS identical
+FROM base.files a JOIN ep1.files b USING (path)
+WHERE a.extension = '.mappins';
+```
+
 ## What the index does not hold
 
 - **Most node properties.** A placement has its transform, class, mesh or template, appearance and debug name, and
   `node_refs` has the TweakDB records, resources, NodeRefs and ids a node holds. Other values, such as a light's
   colour or a trigger's settings, are in the sector files only.
-- **Two kinds of reference on 2.5 cooked nodes.** The `.acousticdata` link of each cooked acoustic entry and the
-  NodeRefs of cooked cable entries are not in `node_refs`. A cooked mesh or decal's resource is in `resource`.
-- **The base game's copy of a sector Phantom Liberty replaces.** Where both ship a sector, the index holds the copy a
-  game with Phantom Liberty loads. 21,603 sectors of 2.5 have both.
 - **Most node-data row fields.** Streaming reference points, node flags, streaming priority, data group and proxy
   mesh id are not columns.
-- **World data outside `.streamingsector` files.** Traffic (`.traffic_persistent`, `.lane_*`), `.mappins`,
-  `.poimappins`, `.loot`, `.devices`, `.areas`, `.null_areas`, `.spatial_representation`, `.location`, `.cminimap`,
-  `.smartobjects`, `.streamingsector_inplace` and `.cookedprefab` files.
-- **Three 2.31 device fields.** In `exterior_-17_21_0_0`, `exterior_-21_-1_0_0` and `exterior_-23_1_4_0` a skill check
-  field stored with a class that no longer exists is empty. `meta` `read_errors` names each one.
+- **Files listed but not decoded.** `.gidata` and `.envprobe` are baked lighting. `.geometry_cache`, `.lights`, `.cminimap`
+  and the binary buffer of `.spatial_representation` have no decoder here yet. `files` has each one's path, size and hash.
+- **Files with nothing to decode.** Every `.location` and `.lane_spots` file holds an empty buffer.
+- **Assets stored under a `worlds` folder.** `.mesh`, `.xbm`, `.mi`, `.ent`, `.cfoliage` and the like are in `files` only.
+- **World data outside a `worlds` folder.** `.community` files, for one, are not in `files`; a community node's
+  references are in `node_refs`.
+- **Files whose name is not known.** `files` lists a path from the names the reader knows, so an archive entry with no
+  known name is absent. Every sector the streaming blocks list has a known name.
+- **Three device fields.** In `exterior_-17_21_0_0`, `exterior_-21_-1_0_0` and `exterior_-23_1_4_0` a skill check
+  field is stored with a class that no longer exists. On 2.31 it is empty; on 2.5 it is read as stored. `meta` `read_errors` names each one.
 - **Anything a save, a quest or a mod changes.** A node in an off-by-default `variant` range is listed with that
   range; whether it exists in a game depends on the quest state.
 
 # The diff between two versions
 
-`diff-<old>-<new>.db` (e.g. `diff-2.31-2.5.db`) pairs every placement of one game version with its counterpart in
-the next. It is built from the two versions' `core.db` and `full.db` by `build/diff.py` and needs neither of them
-to be read. It does not read `foliage.db`: a foliage node is paired, its plants are not.
+`diff-<old>-<new>.db` pairs every placement of one index with its counterpart in another, by version or by edition:
+`diff-2.31-ep1-2.5-ep1.db` and `diff-2.31-base-2.5-base.db` are what a patch changed, and `diff-2.5-base-2.5-ep1.db` and
+`diff-2.31-base-2.31-ep1.db` are what Phantom Liberty changes. It is built from the two indexes' `core.db` and `full.db`
+by `build/diff.py` and needs neither of them to be read. It does not read `foliage.db`: a foliage node is paired, its plants are not.
 
 Placements are matched within each sector path on their class and their mesh or template, by position: the same
 position to 1 cm first, then the nearest remaining placement within 10 m. A cooked 2.5 entry counts as the 2.31 class
@@ -243,7 +313,7 @@ nodes into one, so almost every index changed.
 
 ### `meta`
 
-`old_game`, `new_game`, `old_build`, `new_build`, `built_utc`, `move_limit_m`, and `counts` (JSON: placements
+`old_game`, `new_game`, `old_edition`, `new_edition`, `old_build`, `new_build`, `built_utc`, `move_limit_m`, and `counts` (JSON: placements
 per change).
 
 ### `strings`
@@ -252,7 +322,7 @@ As in the version databases.
 
 ### `sectors`
 
-`id`, `path_id`, `in_old`, `in_new` (1 when the sector exists in that version), `old_placements`, `new_placements`.
+`id`, `path_id`, `in_old`, `in_new` (1 when the sector exists on that side), `old_placements`, `new_placements`.
 
 ### `placements`
 

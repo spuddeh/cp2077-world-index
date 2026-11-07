@@ -1,6 +1,6 @@
 """Compares an extract with the sector files read straight from the game's .archive bytes, with no WolvenKit code.
 
-    python verify/raw_check.py --game-dir "<game install>" --src <extract>/2.5 [--limit N]
+    python verify/raw_check.py --game-dir "<game install>" --src <extract>/2.5-ep1 [--edition base] [--limit N]
 
 Reads every node's class and every node-data row: transform, node index, instance index, global id, streaming
 distance. --tamper changes each sector's first row before comparing, to prove the comparison can fail.
