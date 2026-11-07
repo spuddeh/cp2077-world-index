@@ -16,13 +16,67 @@ import re
 import sqlite3
 import subprocess
 
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 7
 ARRAY_INDEX = re.compile(r"\[(\d+)\]")
 HERE = os.path.dirname(os.path.abspath(__file__))
 
 # A type whose name matches goes to full.db. Matched against the entry type when the row is a cooked entry.
 FULL = re.compile(r"Mesh|Decal|Foliage|Water|Acoustic|Collision|Light|Particle|Occluder|Terrain|GINode|GISpace"
                   r"|Reflection|Effect|Destruction|Rotating|Advertisement|Cable|Fog|Clouds|Wind|Weather")
+
+
+def fnv1a64(text):
+    h = 0xcbf29ce484222325
+    for b in text.encode("utf-8"):
+        h ^= b
+        h = (h * 0x100000001b3) & 0xffffffffffffffff
+    return h
+
+
+class Collisions:
+    """collisions.db: one row per actor of each collision and foliage destruction node, in world space."""
+
+    def __init__(self, path):
+        if os.path.exists(path):
+            os.remove(path)
+        self.con = sqlite3.connect(path)
+        self.con.execute("PRAGMA journal_mode = OFF")
+        self.con.execute("PRAGMA synchronous = OFF")
+        self.con.executescript("""
+            CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT);
+            CREATE TABLE sectors (id INTEGER PRIMARY KEY, path TEXT);
+            CREATE TABLE actors (sector_id INTEGER, node_idx INTEGER, row_idx INTEGER, instance_index INTEGER, actor_no INTEGER,
+                x REAL, y REAL, z REAL, qi REAL, qj REAL, qk REAL, qr REAL, sx REAL, sy REAL, sz REAL, shape_count INTEGER);
+            CREATE VIRTUAL TABLE sectors_rtree USING rtree (id, min_x, max_x, min_y, max_y);
+        """)
+        self.rows = []
+        self.count = 0
+        self.sectors = {}
+
+    def add(self, sid, path, entries):
+        for row, node, entry, actors in entries:
+            if sid not in self.sectors:
+                self.sectors[sid] = path
+            for k, t in enumerate(actors):
+                self.rows.append((sid, node, row, entry if entry >= 0 else None, k, *t))
+            self.count += len(actors)
+        if len(self.rows) > 200000:
+            self.flush()
+
+    def flush(self):
+        self.con.executemany("INSERT INTO actors VALUES (" + ",".join("?" * 16) + ")", self.rows)
+        self.rows = []
+
+    def close(self, meta):
+        self.flush()
+        c = self.con
+        c.executemany("INSERT INTO sectors VALUES (?,?)", list(self.sectors.items()))
+        c.executemany("INSERT INTO meta VALUES (?,?)", list(meta.items()) + [("database", "collisions")])
+        c.execute("INSERT INTO sectors_rtree SELECT sector_id, MIN(x), MAX(x), MIN(y), MAX(y) FROM actors GROUP BY sector_id")
+        c.execute("CREATE INDEX actors_node ON actors (sector_id, node_idx)")
+        c.commit()
+        c.execute("VACUUM")
+        c.close()
 
 
 class Db:
@@ -102,6 +156,8 @@ def main():
     ap.add_argument("--game", required=True)
     ap.add_argument("--src", required=True)
     ap.add_argument("--out", required=True)
+    ap.add_argument("--names-from", action="append", default=[], metavar="DB",
+                    help="a built database whose strings name appearance hashes a cooked entry keeps")
     ap.add_argument("--edition", default="ep1", choices=["ep1", "base"],
                     help="ep1: the copy a game with Phantom Liberty loads; base: the copy a game without it loads")
     a = ap.parse_args()
@@ -116,7 +172,9 @@ def main():
     read = set()
     # What a read could not carry through, summed over the world, and each accepted parsing error by sector.
     audit = {"nodes": 0, "rows": 0, "rowsNoNode": 0, "emptyChunks": 0, "walkCut": 0, "walkErrors": 0, "outlineBad": 0,
-             "instanceSplit": 0, "occluderShear": 0, "occluderNonFinite": 0, "occluderUnread": 0, "occluderMismatch": 0}
+             "instanceSplit": 0, "occluderShear": 0, "occluderNonFinite": 0, "occluderUnread": 0, "occluderMismatch": 0,
+             "collisionUnread": 0}
+    collisions = Collisions(os.path.join(a.out, "collisions.db"))
     read_errors, analyze_errors, unplaced = {}, {}, {}
     for part in parts:
         with open(part, encoding="utf-8") as f:
@@ -136,6 +194,7 @@ def main():
                 for n in s["nodes"]:
                     if n.get("u"):
                         unplaced[n["t"]] = unplaced.get(n["t"], 0) + 1
+                collisions.add(sid, path, s.get("collisions") or [])
                 nodes = {n["i"]: n for n in s["nodes"]}
                 starts = s.get("variantIndices") or []
                 placed_in = {}   # node index -> (db, first placement id, row)
@@ -227,9 +286,29 @@ def main():
             "built_utc": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
             "build_commit": git_commit() or "", "sectors_read": str(len(read)),
             "sectors_listed": str(len(descriptors))}
+    collisions.close(meta)
+    print(f"collisions.db: {collisions.count:,} actors, {os.path.getsize(os.path.join(a.out, 'collisions.db')) / 1e6:,.0f} MB")
+    known = {}
+    for other in a.names_from:
+        o = sqlite3.connect(f"file:{other}?immutable=1", uri=True)
+        for (text,) in o.execute("SELECT text FROM strings"):
+            known[fnv1a64(text)] = text
+        o.close()
+    for _, db in dbs:
+        for text in db.strings:
+            if not text.isdigit():
+                known[fnv1a64(text)] = text
     for name, db in dbs:
         db.flush()
         c = db.con
+        hashes = [(sid, known[int(t)]) for t, sid in list(db.strings.items()) if t.isdigit() and int(t) in known]
+        if hashes:
+            c.execute("CREATE TEMP TABLE named (old INTEGER PRIMARY KEY, new INTEGER)")
+            c.executemany("INSERT INTO named VALUES (?,?)", [(sid, db.s(text)) for sid, text in hashes])
+            c.execute("UPDATE nodes SET appearance_id = (SELECT new FROM named WHERE old = appearance_id) WHERE appearance_id IN (SELECT old FROM named)")
+            c.execute("DROP TABLE named")
+        left = sum(1 for t in db.strings if t.isdigit() and int(t) not in known)
+        print(f"{name}: appearance hashes named {len(hashes):,}, strings still a number {left:,}")
         c.executemany("INSERT INTO strings VALUES (?,?)", ((i, t) for t, i in db.strings.items()))
         for path, d in descriptors.items():
             sid = sector_ids[path]
