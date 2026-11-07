@@ -60,6 +60,12 @@ function clean(v) {
     return o;
 }
 
+// A buffer's bytes arrive as base64 text; its size is the decoded length.
+function decodedLength(b64) {
+    const pad = b64.endsWith("==") ? 2 : b64.endsWith("=") ? 1 : 0;
+    return b64.length / 4 * 3 - pad;
+}
+
 const errors = [];
 function save(name, lines) { wkit.SaveToRaw(OUT + name + ".ndjson", lines.length ? lines.join("\n") + "\n" : "\n"); }
 function each(world, kind, array, shape) {
@@ -151,7 +157,7 @@ if (PART === "single") {
             if (PART === "prefab") { return { path: paths[k], dependencies: clean(r.dependencies), embedded: embedded }; }
             if (PART === "community") { return { path: paths[k], template: clean(r.communityTemplate) }; }
             if (PART === "acoustic") {
-                return { path: paths[k], cells: r.cells.map(function (c) { return { sector: c.sectorId, bytes: c.nodes && c.nodes.Bytes ? c.nodes.Bytes.length : 0 }; }) };
+                return { path: paths[k], cells: r.cells.map(function (c) { return { sector: c.sectorId, bytes: c.nodes && c.nodes.Bytes ? decodedLength(c.nodes.Bytes) : 0 }; }) };
             }
             return {
                 path: paths[k], box: clean(r.localBoundingBox), nodes: clean(r.compiledNodesData), members: clean(r.soMembership),

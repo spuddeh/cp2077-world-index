@@ -8,7 +8,6 @@ Exits 1 on any difference.
 """
 import argparse
 import collections
-import ctypes
 import glob
 import json
 import math
@@ -16,6 +15,9 @@ import os
 import struct
 import sys
 import time
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from rawio import fnv, game_files, kraken, load_oodle  # noqa: E402
 
 ap = argparse.ArgumentParser()
 ap.add_argument("--game-dir", required=True)
@@ -25,51 +27,7 @@ ap.add_argument("--edition", default="ep1", choices=["ep1", "base"])
 ap.add_argument("--tamper", action="store_true")
 args = ap.parse_args()
 root, limit = args.game_dir, args.limit
-oodle = ctypes.WinDLL(root + "/bin/x64/oo2ext_7_win64.dll")
-oodle.OodleLZ_Decompress.restype = ctypes.c_longlong
-oodle.OodleLZ_Decompress.argtypes = [ctypes.c_char_p, ctypes.c_longlong, ctypes.c_char_p, ctypes.c_longlong] + [ctypes.c_longlong] * 10
-
-
-def kraken(data):
-    assert data[:4] == b"KARK", data[:8]
-    size = struct.unpack_from("<I", data, 4)[0]
-    out = ctypes.create_string_buffer(size)
-    got = oodle.OodleLZ_Decompress(data[8:], len(data) - 8, out, size, 0, 0, 0, 0, 0, 0, 0, 0, 0, 3)
-    assert got == size, (got, size)
-    return out.raw
-
-
-def fnv(text):
-    h = 0xcbf29ce484222325
-    for b in text.encode("utf-8"):
-        h ^= b
-        h = (h * 0x100000001b3) & 0xffffffffffffffff
-    return h
-
-
-class Archive:
-    def __init__(self, path):
-        self.f = open(path, "rb")
-        magic, version, index_pos, index_size = struct.unpack("<IIQI", self.f.read(20))
-        assert magic == 0x52414452, hex(magic)
-        self.f.seek(index_pos)
-        _table_offset, _table_size, _crc, entries, segments, deps = struct.unpack("<IIQIII", self.f.read(28))
-        self.entries = {}
-        data = self.f.read(entries * 56)
-        for k in range(entries):
-            h, _ts, _inline, start, end = struct.unpack_from("<QqIII", data, k * 56)
-            self.entries[h] = (start, end)
-        self.segments = list(struct.iter_unpack("<QII", self.f.read(segments * 16)))
-
-    def read(self, h):
-        start, end = self.entries[h]
-        parts = []
-        for k in range(start, end):
-            offset, zsize, size = self.segments[k]
-            self.f.seek(offset)
-            raw = self.f.read(zsize)
-            parts.append(kraken(raw) if k == start and zsize != size else raw)
-        return b"".join(parts)
+load_oodle(root)
 
 
 def sector(file):
@@ -126,16 +84,7 @@ def f32(v):
     return struct.pack("<f", v)
 
 
-archives = []
-for folder in ("content", "ep1") if args.edition == "ep1" else ("content",):
-    for path in sorted(glob.glob(f"{root}/archive/pc/{folder}/*.archive")):
-        name = os.path.basename(path)
-        if not (name.startswith("lang_") or name.startswith("audio_")):
-            archives.append(Archive(path))
-winner = {}
-for a in archives:
-    for h in a.entries:
-        winner[h] = a   # the game loads ep1 after the base game, so its copy of a path wins
+winner = game_files(root, args.edition)   # the game loads ep1 after the base game, so its copy of a path wins
 stats = collections.Counter()
 bad = []
 started = time.time()
