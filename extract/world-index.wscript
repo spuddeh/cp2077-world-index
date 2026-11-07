@@ -14,7 +14,9 @@
 //                        (wkit.WorldIndexFoliage), one line per sector that has any, for build.py's foliage.db
 // A run writes the part files FROM to TO. Each file is written as soon as its sectors are read, so a run cut
 // short keeps every file it finished; run the rest by setting FROM. A whole game is 53 files: 2.5 reads all of them
-// in 26 minutes, 2.31 (read through the 2.31 helper) about 17 per 29 minutes, against the 30-minute cap.
+// in about 5 minutes at THREADS = 8. A 2.31 sector goes through the 2.31 helper, whose rebuild into WolvenKit 10
+// takes one sector at a time, so threads gain less there; one thread reads about 17 files per 29 minutes, against
+// the 30-minute cap.
 // ONLY = "extra" reads just the main menu sectors and the unlisted ones into part-extra-<NN>.ndjson, for adding them to
 // an extract made with the two Night City blocks alone.
 //
