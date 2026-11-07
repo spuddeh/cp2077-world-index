@@ -17,7 +17,8 @@ nodes in `full.db`: one row per plant, `type` `worldFoliageNode`, with the node'
 `instance_no` the plant's number and `position_source` `instance`. It has no `global_id`, `debug_id` or
 `streaming_distance`, and its `node_refs` and `outlines` tables are empty. Plant scale is stored as the file has it:
 on 2.5, 22,426 plants have a negative scale. Measured by their mesh's bounding box, 16,041 are under 1 cm across, 21,819 under
-5 cm and all but one under 50 cm. Open the others with `ATTACH`:
+5 cm and all but one under 50 cm. The game keeps them: a loaded foliage node counts every plant the file holds, negative ones
+included, and numbers them as `instance_no` does. Open the others with `ATTACH`:
 
 ```sql
 ATTACH 'full.db' AS full;
