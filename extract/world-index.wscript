@@ -3,8 +3,9 @@
 // The sector list comes from the game's three streaming blocks (Night City, Phantom Liberty, the main menu world),
 // plus every sector in the game archives that no block lists: the game never streams those, and each descriptor
 // says which block lists it (block null for none). Interior sectors with LOD suffixes other than _0 are included. Each sector goes through wkit.WorldIndexSector (a host function
-// WolvenKit does not ship), which reads 2.31 and 2.5 sectors into the same shape. Output, under the dump directory's
-// wscript\raw\world-index\<GAME>\:
+// WolvenKit does not ship), which reads 2.31 and 2.5 sectors into the same shape. Each part file's sectors are read
+// together through wkit.Batch on THREADS worker threads. Output, under the dump directory's
+// wscript\raw\world-index\<GAME>-<EDITION>\ (or OUT_DIR):
 //   sectors.json        every descriptor: path, block, category, level, streaming box, variants, quest prefab
 //   part-<NN>.ndjson     one line per sector, CHUNK sectors per file
 //   errors-<NN>.json     the sectors of part-<NN> that could not be read, with the reason
@@ -26,6 +27,8 @@ const FROM  = 0, TO = 25;    // the first and last part-<NN> file this run write
 const ONLY  = null;         // "extra": the main menu and unlisted sectors, into part-extra-<NN>.ndjson;
                             // "foliage": every sector's foliage plants, into foliage-<NN>.ndjson
 const CHUNK = 500;          // sectors per NDJSON file
+const THREADS = 8;          // worker threads per part file; 0 takes half the logical processors
+const OUT_DIR = null;       // null: world-index/<GAME>-<EDITION>/; another folder keeps an earlier extract intact
 // ----------------
 
 const BS = String.fromCharCode(92);
@@ -35,7 +38,7 @@ const BLOCKS = [
     { name: "ep1", path: PRE + "ep1" + BS + "blocks" + BS + "all.streamingblock" },
     { name: "main_menu", path: ["base", "worlds", "04_main_menu", "_compiled", "default", "blocks", "all.streamingblock"].join(BS) }
 ];
-const OUT = "world-index/" + GAME + "-" + EDITION + "/";
+const OUT = OUT_DIR ? OUT_DIR.replace(/[\/\\]?$/, "/") : "world-index/" + GAME + "-" + EDITION + "/";
 const COPY = EDITION === "base" ? "basegame" : null;
 
 function fileOf(p) { return EDITION === "base" ? wkit.BaseGameFile(p) : wkit.GetFileFromArchive(p, OpenAs.GameFile); }
@@ -106,31 +109,31 @@ let lines = [], chunk = ONLY === "extra" ? 0 : FROM, rows = 0;
 const prefix = ONLY === "extra" ? "part-extra-" : ONLY === "foliage" ? "foliage-" : "part-";
 const errPrefix = ONLY === "extra" ? "errors-extra-" : ONLY === "foliage" ? "errors-foliage-" : "errors-";
 const started = Date.now();
-for (let k = first; k < last; k++) {
-    const path = todo[k].path;
-    let text;
-    try { text = ONLY === "foliage" ? wkit.WorldIndexFoliage(path, COPY) : wkit.WorldIndexSector(path, COPY); }
-    catch (e) { text = JSON.stringify({ path: path, error: String(e) }); }
-    const parsed = JSON.parse(text);
-    if (parsed.error || parsed.found === false) {
-        errors.push({ path: path, error: parsed.error || "not in the loaded archives" });
-    } else if (ONLY !== "foliage" || parsed.rows.length > 0) {
-        rows += parsed.rows.length;
-        total.rows += parsed.audit.rows ?? 0;
-        total.stances += parsed.audit.stances ?? 0;
-        total.written += parsed.audit.written ?? 0;
-        lines.push(text);
+const read = ONLY === "foliage" ? "WorldIndexFoliage" : "WorldIndexSector";
+for (let s = first; s < last; s += CHUNK) {
+    const paths = todo.slice(s, Math.min(last, s + CHUNK)).map(function (d) { return d.path; });
+    const texts = wkit.Batch(read, paths, THREADS, COPY);
+    for (let k = 0; k < paths.length; k++) {
+        const text = texts[k];
+        const parsed = JSON.parse(text);
+        if (parsed.error || parsed.found === false) {
+            errors.push({ path: paths[k], error: parsed.error || "not in the loaded archives" });
+        } else if (ONLY !== "foliage" || parsed.rows.length > 0) {
+            rows += parsed.rows.length;
+            total.rows += parsed.audit.rows ?? 0;
+            total.stances += parsed.audit.stances ?? 0;
+            total.written += parsed.audit.written ?? 0;
+            lines.push(text);
+        }
     }
-    if ((k + 1) % CHUNK === 0 || k === last - 1) {
-        wkit.SaveToRaw(OUT + prefix + pad(chunk) + ".ndjson", lines.join("\n") + "\n");
-        wkit.SaveToRaw(OUT + errPrefix + pad(chunk) + ".json", JSON.stringify(errors));
-        logger.Info(prefix + pad(chunk) + ": " + lines.length + " sectors, " + errors.length + " unreadable, "
-            + Math.round((Date.now() - started) / 1000) + " s so far");
-        unreadable += errors.length;
-        lines = [];
-        errors = [];
-        chunk++;
-    }
+    wkit.SaveToRaw(OUT + prefix + pad(chunk) + ".ndjson", lines.join("\n") + "\n");
+    wkit.SaveToRaw(OUT + errPrefix + pad(chunk) + ".json", JSON.stringify(errors));
+    logger.Info(prefix + pad(chunk) + ": " + lines.length + " sectors, " + errors.length + " unreadable, "
+        + Math.round((Date.now() - started) / 1000) + " s so far");
+    unreadable += errors.length;
+    lines = [];
+    errors = [];
+    chunk++;
 }
 logger.Info("DONE files " + pad(FROM) + ".." + pad(chunk - 1) + ": " + (last - first - unreadable) + " sectors, " + rows
     + " rows, " + unreadable + " unreadable, " + Math.round((Date.now() - started) / 1000) + " s; " + JSON.stringify(total));
