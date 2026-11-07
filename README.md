@@ -85,10 +85,15 @@ python build/diff.py --old out/2.5-base --new out/2.5-ep1 --out out
 only when the extract has `foliage-*.ndjson` files. `--names-from` names the appearance hashes a 2.5 cooked entry keeps.
 
 `verify/raw_check.py` reads every sector straight from the game's `.archive` files, with no WolvenKit code, and compares
-every node class and node-data row with an extract. It takes about a minute and needs only Python and the game:
+every node class and node-data row with an extract. `verify/world_check.py` does the same for every world file: it reads each
+CR2W property by its own name and type, and the custom data of loot, devices, lanes, persistent state and compiled smart objects
+by their layouts. `verify/noderef_check.py` looks for each sector NodeRef's text in its own sector. Each needs only Python and the
+game, and takes one to two minutes:
 
 ```
 python verify/raw_check.py --game-dir "<game install>" --src <extract>/2.5-base --edition base
+python verify/world_check.py --game-dir "<game install>" --src <extract>/2.5-base/world --edition base --db out/2.5-base/world.db
+python verify/noderef_check.py --game-dir "<game install>" --db out/2.5-base --edition base
 ```
 
 ## What this contains, and whose it is
