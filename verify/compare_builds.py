@@ -9,7 +9,10 @@ A row present in one build only is listed with its table's identity columns. Whe
 columns that differ are named and counted, so a difference reads as "nodes.resource: 12 rows" rather than as a pair
 of rows to compare by eye.
 
-    python verify/compare_builds.py --old out/2.31-ep1 --new <dir> [--db core full collisions foliage] [--show 5]
+    python verify/compare_builds.py --old out/2.31-ep1 --new <dir> [--db core full collisions foliage world smartobjects] [--show 5]
+
+A table with no IDENTITY entry (sector_inplace, cooked_prefabs, smart_object_members) is matched on every column, so a
+changed row shows as one row only in old and one only in new.
 
 Exits 1 when any table differs.
 """
@@ -34,6 +37,28 @@ IDENTITY = {
     "outlines": ["sector", "row_idx", "instance_index", "instance_no"],
     "actors": ["sector", "row_idx", "instance_index", "actor_no", "node_idx"],
     "meta": ["key"],
+    # world.db and smartobjects.db: no string ids, so only the identity is needed.
+    "files": ["path"],
+    "world_resources": ["world"],
+    "mappins": ["world", "kind", "idx"],
+    "poi_mappins": ["world", "idx"],
+    "areas": ["world", "idx"],
+    "loot": ["world", "node_ref_hash", "idx"],
+    "devices": ["world", "init", "idx"],
+    "persistent_states": ["world", "idx"],
+    "locomotion_paths": ["world", "idx"],
+    "roads": ["world", "idx"],
+    "road_links": ["world", "idx"],
+    "traffic_lanes": ["world", "idx"],
+    "traffic_lane_collisions": ["world", "idx"],
+    "traffic_neighbor_groups": ["world", "idx"],
+    "null_area_collisions": ["world", "idx"],
+    "null_area_blockades": ["world", "idx"],
+    "acoustic_cells": ["path", "idx"],
+    "community_entries": ["path", "entry"],
+    "community_periods": ["path", "entry", "phase", "period"],
+    "smart_object_files": ["path"],
+    "smart_objects": ["path", "idx"],
 }
 
 SKIP_META = {"built", "build_seconds", "built_utc", "source", "build_commit"}
