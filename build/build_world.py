@@ -1,6 +1,10 @@
 """Build world.db and the optional smartobjects.db for one game version and edition from world-files.wscript's output.
 
     python build/build_world.py --game 2.5 --edition ep1 --game-dir "<game install>" --src <extract>/2.5-ep1/world --out out/2.5-ep1
+        [--names-from out/2.5-ep1/full.db]
+
+A TweakDBID the extract has only as <TDBID:HEX> is named from any known string whose CRC32 and length match: the
+extract's own dotted strings and the strings of each --names-from database.
 
 world.db holds the world's data outside sector files, and `files`: every file under a worlds folder with its size and
 content hash, read from the game's own .archive indexes, so a baked or opaque file that has no table of its own is still
@@ -12,9 +16,11 @@ import datetime
 import glob
 import json
 import os
+import re
 import sqlite3
 import struct
 import subprocess
+import zlib
 
 SCHEMA_VERSION = 2
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -109,13 +115,53 @@ def archive_index(game_dir, edition):
     return found
 
 
+UNNAMED = re.compile(r'"<TDBID:([0-9A-F]+)>"')
+# A string that can be a TweakDB record or flat name: dotted words.
+DOTTED = re.compile(r'"([A-Za-z0-9_]+(?:\.[A-Za-z0-9_-]+)+)"')
+NAMES = {}  # TweakDBID -> its text, for every <TDBID:...> the extract holds and a known string names
+
+
+def tweakdb_id(text):
+    """A TweakDBID: the CRC32 of the text in the low 32 bits, its byte length in the next 8."""
+    b = text.encode("utf-8")
+    return zlib.crc32(b) | (len(b) << 32)
+
+
+def learn_names(src, names_from, counts):
+    """Fill NAMES for the TweakDBIDs the extract writes as <TDBID:...>, from the extract's own dotted strings and the
+    strings of the databases names_from names. WolvenKit's JSON already names every TweakDBID its own list holds, so a
+    TweakDB record listing adds none."""
+    wanted, candidates = set(), set()
+    for path in glob.glob(os.path.join(src, "*.ndjson")):
+        with open(path, encoding="utf-8") as f:
+            for line in f:
+                if "<TDBID:" in line:
+                    wanted.update(int(h, 16) for h in UNNAMED.findall(line))
+                candidates.update(DOTTED.findall(line))
+    for other in names_from:
+        o = sqlite3.connect(f"file:{other}?immutable=1", uri=True)
+        candidates.update(t for (t,) in o.execute("SELECT text FROM strings WHERE text LIKE '%.%'"))
+        o.close()
+    for text in candidates:
+        i = tweakdb_id(text)
+        if i in wanted:
+            NAMES[i] = text
+    counts["TweakDBIDs named by the build"] = len(NAMES)
+    counts["TweakDBIDs left unnamed"] = len(wanted) - len(NAMES)
+
+
+def name(m):
+    text = NAMES.get(int(m.group(1), 16))
+    return json.dumps(text, ensure_ascii=False) if text is not None else m.group(0)
+
+
 def lines(path):
     if not os.path.exists(path):
         return
     with open(path, encoding="utf-8") as f:
         for line in f:
             if line.strip():
-                yield json.loads(line)
+                yield json.loads(UNNAMED.sub(name, line) if "<TDBID:" in line else line)
 
 
 def dumps(v):
@@ -133,6 +179,8 @@ def main():
     ap.add_argument("--game-dir", required=True)
     ap.add_argument("--src", required=True)
     ap.add_argument("--out", required=True)
+    ap.add_argument("--names-from", action="append", default=[], metavar="DB",
+                    help="a built database whose strings name TweakDBIDs the extract has only as <TDBID:...>")
     a = ap.parse_args()
     os.makedirs(a.out, exist_ok=True)
     path = os.path.join(a.out, "world.db")
@@ -144,6 +192,7 @@ def main():
     c.executescript(SCHEMA)
     src = a.src
     counts = collections.Counter()
+    learn_names(src, a.names_from, counts)
 
     index = archive_index(a.game_dir, a.edition)
     for part in glob.glob(os.path.join(src, "mod-served-*.json")):

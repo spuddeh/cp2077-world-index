@@ -435,7 +435,9 @@ class Compare:
         if isinstance(raw, Tdb):
             if isinstance(ext, str):
                 m = re.match(r"^<TDBID:([0-9A-Fa-f]{8}):([0-9A-Fa-f]{2})>$", ext)
-                want = (int(m.group(1), 16) | (int(m.group(2), 16) << 32)) if m else int(ext) if ext.isdigit() else tdb_text(ext)
+                whole = re.match(r"^<TDBID:([0-9A-Fa-f]+)>$", ext)  # the extract's form for one WolvenKit has no text for
+                want = ((int(m.group(1), 16) | (int(m.group(2), 16) << 32)) if m else int(whole.group(1), 16) if whole
+                        else int(ext) if ext.isdigit() else tdb_text(ext))
             else:
                 want = int(ext) if ext is not None else 0
             if (raw & 0xFFFFFFFFFF) != (want & 0xFFFFFFFFFF):

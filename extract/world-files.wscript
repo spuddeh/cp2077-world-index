@@ -1,8 +1,7 @@
 // world-files.wscript - reads the world's files other than sectors into NDJSON for build_world.py.
 //
 // Output, under the dump directory's wscript\raw\world-index\<GAME>-<EDITION>\world\ (or OUT_DIR):
-//   filelist.json                    every path under base\worlds, for the file catalogue
-//   <world>-<kind>.ndjson            one line per element of the world's single files
+//   filelist.json                    every path under base\worlds, for the file catalogue//   <world>-<kind>.ndjson            one line per element of the world's single files
 //   <kind>-<NN>.ndjson               one line per per-area file, CHUNK files per NDJSON
 //   errors-<PART>.json               the files of this run that could not be read, with the reason
 //   mod-served-<PART>.json           the paths of this run a mod archive serves; build_world.py refuses any the game also ships
@@ -52,11 +51,20 @@ function read(path) {
     throw new Error("not readable after 10 attempts");
 }
 
+// A TweakDBID WolvenKit has no text for: "" when empty, else <TDBID:HEX> as the sector extract writes it, for
+// build_world.py to name. Whether WolvenKit has the text depends on what the server read before, empty included.
+function tweakDbId(v) {
+    if (v.$storage !== "uint64") { return v.$value; }
+    const id = BigInt(String(v.$value));
+    return id === 0n ? "" : "<TDBID:" + id.toString(16).toUpperCase() + ">";
+}
+
 // Plain data: handles become their object, and a type name stays only where the class says something.
 const PLAIN = new Set(["Vector2", "Vector3", "Vector4", "Quaternion", "Transform", "Box", "worldTrafficStaticCollisionSphere"]);
 function clean(v) {
     if (v === null || typeof v !== "object") { return v; }
     if (Array.isArray(v)) { return v.map(clean); }
+    if (v.$type === "TweakDBID") { return tweakDbId(v); }
     if (v.$value !== undefined) { return v.$value; }
     if (v.DepotPath !== undefined) { return clean(v.DepotPath); }
     if (v.Elements !== undefined && Object.keys(v).length <= 2) { return clean(v.Elements); }
@@ -107,8 +115,7 @@ if (PART === "single") {
         if (p.indexOf(BS + "worlds" + BS) >= 0) { list.push(p); }
     }
     wkit.SaveToRaw(OUT + "filelist.json", JSON.stringify(list.sort()));
-    logger.Info("world files " + list.length);
-    for (const w of WORLDS) {
+    logger.Info("world files " + list.length);    for (const w of WORLDS) {
         const C = ["base", "worlds", w, "_compiled", "default"].join(BS) + BS;
         const T = ["base", "worlds", w, "sectors", "_generated", "traffic"].join(BS) + BS;
         chunkOf(C + w + ".streamingworld", function (r) { each(w, "world", [r]); });
