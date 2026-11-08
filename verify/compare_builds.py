@@ -36,7 +36,7 @@ IDENTITY = {
     "meta": ["key"],
 }
 
-SKIP_META = {"built", "build_seconds", "built_utc", "source"}
+SKIP_META = {"built", "build_seconds", "built_utc", "source", "build_commit"}
 
 
 def columns(con, table):
