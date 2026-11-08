@@ -77,17 +77,23 @@ archives must be the game's own: the scripts stop on a sector or world file a mo
 python build/build.py --game 2.31 --edition ep1 --src <extract>/2.31-ep1 --out out/2.31-ep1
 python build/build.py --game 2.5 --edition ep1 --names-from out/2.31-ep1/full.db --src <extract>/2.5-ep1 --out out/2.5-ep1
 python build/build_world.py --game 2.5 --edition ep1 --game-dir "<game install>" --src <extract>/2.5-ep1/world --out out/2.5-ep1
+python build/fix_noderefs.py --game-dir "<game install>" --db out/2.5-ep1
 python build/diff.py --old out/2.31-ep1 --new out/2.5-ep1 --out out
 python build/diff.py --old out/2.5-base --new out/2.5-ep1 --out out
 ```
 
 `build.py` and `diff.py` take about 3 minutes each and `build_world.py` about 25 seconds. `build.py` writes `foliage.db`
 only when the extract has `foliage-*.ndjson` files. `--names-from` names the appearance hashes a 2.5 cooked entry keeps.
+`fix_noderefs.py` runs on every 2.5 build, after `build.py` and `build_world.py`, and takes about 15 seconds: the 2.5 extract
+can print a NodeRef in another spelling of the same hash, and it sets each one to the text its file stores. It edits the
+databases in place, a second run changes nothing, and `meta` keeps `noderefs_corrected` and `noderefs_left`.
 
 `verify/raw_check.py` reads every sector straight from the game's `.archive` files, with no WolvenKit code, and compares
 every node class and node-data row with an extract. `verify/world_check.py` does the same for every world file: it reads each
 CR2W property by its own name and type, and the custom data of loot, devices, lanes, persistent state and compiled smart objects
-by their layouts. `verify/noderef_check.py` looks for each sector NodeRef's text in its own sector. Each needs only Python and the
+by their layouts; on a 2.5 extract it reports the community NodeRefs in another spelling (193 on ep1, 192 on base) and exits 1,
+while its `--db` check of `world.db` passes once `fix_noderefs.py` has run. `verify/noderef_check.py` looks for each sector
+NodeRef's text in its own sector; after `fix_noderefs.py` only the cable destruction hashes are left. Each needs only Python and the
 game, and takes one to two minutes:
 
 ```

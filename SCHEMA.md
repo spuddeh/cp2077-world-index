@@ -301,10 +301,10 @@ WHERE a.extension = '.mappins';
   preset and materials are in the sector files only.
 - **Most node-data row fields.** Streaming reference points, node flags, streaming priority, data group and proxy
   mesh id are not columns.
-- **The text of some 2.5 NodeRefs.** A NodeRef's hash skips `#` and stops at `;`, and the 2.5 reader prints the first text with
-  that hash it has met, so about 880 `ref` values per 2.5 edition, and one in `world.db`, are another spelling of the file's
-  NodeRef: the same node, a `#` placed elsewhere or a `;` suffix added. 2.31 values are the file's text. `verify/noderef_check.py`
-  lists them.
+- **The names of cable destruction NodeRefs.** A cooked cable keeps its `buffer.innerNodes[].destructionHashes[]` as hashes
+  only. The 2.5 `ref` value is a name the reader knew for that hash, or the hash as a number where it knew none (221 rows on
+  2.5-ep1, 220 on 2.5-base); `meta` `noderefs_left` in `full.db` counts these rows. Every other NodeRef, in every database, is
+  its file's text.
 - **Files listed but not decoded.** `.gidata` and `.envprobe` are baked lighting. `.geometry_cache`, `.lights`, `.cminimap`
   and the binary buffer of `.spatial_representation` have no decoder here yet. `files` has each one's path, size and hash.
 - **Files with nothing to decode.** Every `.location` and `.lane_spots` file holds an empty buffer.
