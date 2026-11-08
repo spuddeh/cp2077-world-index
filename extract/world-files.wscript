@@ -1,6 +1,6 @@
 // world-files.wscript - reads the world's files other than sectors into NDJSON for build_world.py.
 //
-// Output, under the dump directory's wscript\raw\world-index\<GAME>-<EDITION>\world\:
+// Output, under the dump directory's wscript\raw\world-index\<GAME>-<EDITION>\world\ (or OUT_DIR):
 //   filelist.json                    every path under base\worlds, for the file catalogue
 //   <world>-<kind>.ndjson            one line per element of the world's single files
 //   <kind>-<NN>.ndjson               one line per per-area file, CHUNK files per NDJSON
@@ -8,7 +8,9 @@
 //   mod-served-<PART>.json           the paths of this run a mod archive serves; build_world.py refuses any the game also ships
 // Baked and opaque files (.gidata, .envprobe, .geometry_cache, .lights, .cminimap) are in the catalogue only.
 // A run is one PART. A per-area part writes files FROM to the end, each as soon as it is read, so a run cut short at the
-// 30-minute cap keeps every file it finished; run the rest by setting FROM.
+// 30-minute cap keeps every file it finished; run the rest by setting FROM. A per-area part reads its files through
+// wkit.Batch, at most SLICE files and BATCH_MB of file bytes at a time on THREADS threads; a file the batch could
+// not read is read again on its own.
 
 // ---- CONFIG ----
 const GAME    = "2.5";      // the game version the loaded archives belong to; names the output folder
@@ -16,10 +18,17 @@ const EDITION = "ep1";      // "ep1": the copy a game with Phantom Liberty loads
 const PART    = "single";   // single, inplace, prefab, acoustic, smartobjects or community
 const FROM    = 0;          // the first NDJSON file of a per-area part
 const CHUNK   = 200;        // per-area files per NDJSON
+const THREADS = 8;          // worker threads per batch; 0 takes half the logical processors
+const SLICE   = 50;         // most files per batch: each one's JSON is held until its slice is written
+const BATCH_MB = 40;        // most file bytes per batch, in MB: a batch's JSON is about 13 characters per file byte and is all
+                            // held by the script engine at once, which ends the server when it runs out of room
+const OUT_DIR = null;       // null: world-index/<GAME>-<EDITION>/world/; another folder keeps an earlier extract intact
 // ----------------
 
 const BS = String.fromCharCode(92);
-const OUT = "world-index/" + GAME + "-" + EDITION + "/world/";
+const OUT = OUT_DIR ? OUT_DIR.replace(/[\/\\]?$/, "/") : "world-index/" + GAME + "-" + EDITION + "/world/";
+// The copy Batch reads: "base" is the first copy no mod archive serves, as vanilla() requires.
+const COPY = EDITION === "base" ? "basegame" : "base";
 const WORLDS = ["03_night_city", "04_main_menu"];
 
 function vanilla(f) {
@@ -74,9 +83,15 @@ function each(world, kind, array, shape) {
     save(world + "-" + kind, lines);
     logger.Info(world + " " + kind + ": " + lines.length);
 }
-function chunkOf(path, section) {
+// The Data of one Batch result; undefined when the batch could not read it, so read() tries it on its own.
+function batchData(text) {
+    if (!text) { return undefined; }
+    const o = JSON.parse(text);
+    return o.Data !== undefined ? o.Data : undefined;
+}
+function chunkOf(path, section, data) {
     try {
-        const d = read(path);
+        const d = data !== undefined ? data : read(path);
         if (!d) { errors.push({ path: path, error: "no copy in this edition" }); return null; }
         return section(d.RootChunk, d);
     } catch (e) {
@@ -132,10 +147,11 @@ if (PART === "single") {
     }
 } else {
     const EXT = { inplace: ".streamingsector_inplace", prefab: ".cookedprefab", acoustic: ".acousticdata", smartobjects: ".smartobjects", community: ".community" }[PART];
-    const paths = [], modServed = [];
+    const paths = [], modServed = [], size = {};
     for (const f of wkit.GetArchiveFiles()) {
         const p = String(f.FileName ?? f.Name ?? "");
         if (!p.endsWith(EXT) || (PART !== "community" && p.indexOf(BS + "worlds" + BS) < 0)) { continue; }
+        size[p] = Number(f.Size ?? 0);
         if (EDITION === "base") {
             if (wkit.BaseGameFile(p)) { paths.push(p); }
         } else if (vanilla(f)) {
@@ -146,11 +162,24 @@ if (PART === "single") {
     }
     paths.sort();
     wkit.SaveToRaw(OUT + "mod-served-" + PART + ".json", JSON.stringify(modServed.sort()));
-    logger.Info(PART + " files " + paths.length);
+    logger.Info(PART + " files " + paths.length + ", largest " + Math.round(Math.max(0, ...paths.map(p => size[p])) / 1e6) + " MB");
+    // The end of the batch that starts at k: SLICE files or BATCH_MB of bytes, and always at least one file.
+    const batchEnd = function (k) {
+        let end = k + 1, bytes = size[paths[k]];
+        while (end < paths.length && end - k < SLICE && bytes + size[paths[end]] <= BATCH_MB * 1e6) { bytes += size[paths[end]]; end++; }
+        return end;
+    };
     const pad = function (n) { return (n < 10 ? "0" : "") + n; };
     let lines = [];
+    let batch = [], batchStart = 0;
     const started = Date.now();
     for (let k = FROM * CHUNK; k < paths.length; k++) {
+        if (k >= batchStart + batch.length) {
+            batchStart = k;
+            batch = wkit.Batch("GameFileToJson", paths.slice(k, batchEnd(k)), THREADS, COPY);
+        }
+        const data = batchData(batch[k - batchStart]);
+        batch[k - batchStart] = null;
         const row = chunkOf(paths[k], function (r, d) {
             const embedded = (d.EmbeddedFiles || []).map(function (e) { return clean(e.FileName); });
             if (PART === "inplace") { return { path: paths[k], resources: clean(r.inplaceResources), embedded: embedded }; }
@@ -163,7 +192,7 @@ if (PART === "single") {
                 path: paths[k], box: clean(r.localBoundingBox), nodes: clean(r.compiledNodesData), members: clean(r.soMembership),
                 properties: clean(r.propertyDictionary), transforms: clean(r.transformDictionary), sequences: clean(r.transformSequenceDictionary)
             };
-        });
+        }, data);
         if (row) { lines.push(JSON.stringify(row)); }
         if ((k + 1) % CHUNK === 0 || k === paths.length - 1) {
             const n = Math.floor(k / CHUNK);
