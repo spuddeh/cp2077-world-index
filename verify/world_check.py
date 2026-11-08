@@ -3,8 +3,10 @@
     python verify/world_check.py --game-dir "<game install>" --src <extract>/2.5-ep1/world [--edition base] [--db out/2.5-ep1/world.db]
 
 Reads each CR2W file's properties from their own names and types, and the custom data of loot, devices, lane polygons, lane
-connections and persistent state from their layouts, then compares every value with the extract. With --db, also checks
-that world.db holds one row for each element of the extract. --tamper changes one value per file before comparing, to prove
+connections and persistent state from their layouts, then compares every value with the extract. A NodeRef is compared by
+text: one that names the same node in another spelling is counted as "NodeRef text taken from another NodeRef with the same
+hash" and fails the check. With --db, also checks that world.db holds one row for each element of the extract, and that each
+community spot NodeRef in world.db is its file's text. --tamper changes one value per file before comparing, to prove
 the comparison can fail. Exits 1 on any difference.
 """
 import argparse
@@ -43,6 +45,10 @@ class Tdb(int):
 
 class Raw(bytes):
     """A data buffer's bytes, decompressed."""
+
+
+class NodeRefText(str):
+    """A NodeRef's text as the file stores it, told apart from a CName or a string."""
 
 
 def vlq(data, at):
@@ -140,8 +146,11 @@ class CR2W:
             return self.names[struct.unpack_from("<H", d, at)[0]], at + 2
         if kind == "TweakDBID":
             return Tdb(struct.unpack_from("<Q", d, at)[0]), at + 8
-        if kind in ("String", "NodeRef"):
+        if kind == "String":
             return self.string(at)
+        if kind == "NodeRef":
+            text, at = self.string(at)
+            return NodeRefText(text), at
         if kind == "LocalizationString":
             s, at2 = self.string(at + 8)
             return {"unk1": struct.unpack_from("<Q", d, at)[0], "value": s}, at2
@@ -209,9 +218,11 @@ class CR2W:
 
 
 class Package:
-    """A RedPackage buffer (gamePersistentStateDataResource.buffer): root chunks and the CRUID each is keyed by."""
+    """A RedPackage buffer: root chunks and the CRUID each is keyed by. A persistent-state package
+    (gamePersistentStateDataResource.buffer) keeps its root CRUIDs behind a 32-bit count, as a save resource does; any other,
+    such as an entity's instanceData, behind a 16-bit CRUID index and a 16-bit count (save_style=False)."""
 
-    def __init__(self, data):
+    def __init__(self, data, save_style=True):
         self.d = data
         d = data
         self.version, _unk, sections = struct.unpack_from("<BBH", d, 0)
@@ -223,9 +234,12 @@ class Package:
             ref_desc = ref_data = 0
         name_desc, name_data, chunk_desc, chunk_data = struct.unpack_from("<IIII", d, at)
         at += 16
-        # A persistent-state package keeps its root CRUIDs behind a 32-bit count, as a save resource does.
-        n = struct.unpack_from("<I", d, at)[0]
-        at += 4
+        if save_style:
+            n = struct.unpack_from("<I", d, at)[0]
+            at += 4
+        else:
+            n = struct.unpack_from("<H", d, at + 2)[0]
+            at += 4
         self.cruids = list(struct.unpack_from(f"<{n}Q", d, at))
         at += 8 * n
         base = at
@@ -274,7 +288,7 @@ class Package:
             return Tdb(struct.unpack_from("<Q", d, at)[0]), at + 8
         if kind == "NodeRef":
             n = struct.unpack_from("<h", d, at)[0]
-            return d[at + 2:at + 2 + n].decode("utf-8"), at + 2 + n
+            return NodeRefText(d[at + 2:at + 2 + n].decode("utf-8")), at + 2 + n
         if kind == "String":
             n = struct.unpack_from("<H", d, at)[0]
             return d[at + 2:at + 2 + n].decode("utf-8"), at + 2 + n
@@ -312,6 +326,16 @@ class Package:
         if kind == "DataBuffer":
             n = struct.unpack_from("<I", d, at)[0]
             return Raw(d[at + 4:at + 4 + n]), at + 4 + n
+        if kind == "curveData":
+            # A count, each point's time and value, then the interpolation and link type bytes.
+            count = struct.unpack_from("<I", d, at)[0]
+            at += 4
+            out = []
+            for _ in range(count):
+                point = struct.unpack_from("<f", d, at)[0]
+                v, at = self.value(inner, at + 4)
+                out.append({"point": point, "value": v})
+            return out, at + 2
         v = {"$type": kind}
         return v, self.fields(v, at)
 
@@ -542,12 +566,19 @@ class Compare:
             if raw == "" and ext == "0":
                 self.stats["empty NodeRef written as 0 by WolvenKit"] += 1
                 return
-            if str(ext).startswith(raw + ";"):
-                # WolvenKit keeps a NodeRef as its hash, which stops at ';', and prints the text of whichever NodeRef with
-                # that hash it met: the value names the same node, the text is not this file's.
-                self.stats["NodeRef text taken from another NodeRef with the same hash"] += 1
-                if len(self.bad) < 40:
-                    self.bad.append((where, raw[-60:], str(ext)[-60:]))
+            if isinstance(raw, NodeRefText):
+                def node_hash(text):
+                    return fnv(text.replace("#", "").split(";", 1)[0])
+                if str(ext).isdigit() and node_hash(raw) == int(ext):
+                    return
+                if node_hash(str(ext)) == node_hash(raw):
+                    # WolvenKit keeps a NodeRef as its hash ('#' removed, up to ';') and prints the text of whichever
+                    # NodeRef with that hash it met: the value names the same node, the text is not this file's.
+                    self.stats["NodeRef text taken from another NodeRef with the same hash"] += 1
+                    if len(self.bad) < 40:
+                        self.bad.append((where, raw[-60:], str(ext)[-60:]))
+                    return
+                self.differ(where, raw, ext)
                 return
             if str(ext).isdigit() and fnv(raw) == int(ext):
                 return
@@ -557,6 +588,17 @@ class Compare:
             self.differ(where, raw, ext)
             return
         self.differ(where, type(raw).__name__, ext)
+
+
+def community_spots(template):
+    """(entry, phase, period) -> the spot NodeRef list of each, from entries and crowdEntries, which world.db numbers alike."""
+    out = collections.defaultdict(list)
+    for key in ("entries", "crowdEntries"):
+        for e, entry in enumerate((template or {}).get(key) or []):
+            for ph, phase in enumerate((entry or {}).get("phases") or []):
+                for pe, period in enumerate((phase or {}).get("timePeriods") or []):
+                    out[(e, ph, pe)].append([str(x) for x in (period or {}).get("spotNodeRefs") or []])
+    return out
 
 
 def lines(path):
@@ -676,6 +718,7 @@ def main():
             check("null_blockades", ((r.get("nullAreaBlockadeData") or {}).get("nullAreasBlockades")) or [], v_of(ex("null_blockades")), w + ".null_blockades")
         print(f"{w}: {round(time.time() - started)} s", flush=True)
 
+    spots = {}
     for kind in ("inplace", "prefab", "acoustic", "smartobjects", "community"):
         if only and kind not in only:
             continue
@@ -698,6 +741,7 @@ def main():
                            "properties": r.get("propertyDictionary"), "transforms": r.get("transformDictionary"), "sequences": r.get("transformSequenceDictionary")}
                 else:
                     raw = {"path": e["path"], "template": r.get("communityTemplate")}
+                    spots[e["path"]] = community_spots(raw["template"])
                 if a.tamper:
                     e["path"] = e["path"] + "x"
                 cmp.stats[kind + " files"] += 1
@@ -720,6 +764,22 @@ def main():
         want = sum(len(r["records"]) for w in ("03_night_city", "04_main_menu") for r in lines(os.path.join(a.src, f"{w}-loot.ndjson")))
         if db.execute("SELECT count(*) FROM loot").fetchone()[0] != want:
             cmp.differ("world.db loot", "rows", want)
+        # world.db keeps each period's spot NodeRefs as JSON: compare them with the file's text, not the extract's.
+        for path, e, ph, pe, refs in db.execute("SELECT path, entry, phase, period, spot_node_refs FROM community_periods"):
+            if path not in spots:
+                continue
+            refs = json.loads(refs) if refs else None
+            for k, text in enumerate(refs or []):
+                cmp.stats["world.db spot NodeRefs compared"] += 1
+                here = {t for spot in spots[path].get((e, ph, pe), []) if k < len(spot) for t in [spot[k] or "0"]}
+                if text in here:
+                    continue
+                if any(fnv(t.replace("#", "").split(";", 1)[0]) == fnv(text.replace("#", "").split(";", 1)[0]) for t in here):
+                    cmp.stats["NodeRef text in world.db not the file's"] += 1
+                    if len(cmp.bad) < 40:
+                        cmp.bad.append((f"world.db {path} {e}.{ph}.{pe}[{k}]", text[-60:], sorted(here)[0][-60:]))
+                else:
+                    cmp.differ(f"world.db {path} {e}.{ph}.{pe}[{k}]", sorted(here), text)
 
     print(json.dumps(cmp.stats, sort_keys=True), "seconds", round(time.time() - started))
     print("properties files leave at their class default, by class and name (top 8):", cmp.defaults.most_common(8))
