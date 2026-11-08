@@ -3,8 +3,10 @@
     python build/build_world.py --game 2.5 --edition ep1 --game-dir "<game install>" --src <extract>/2.5-ep1/world --out out/2.5-ep1
         [--names-from out/2.5-ep1/full.db]
 
-A TweakDBID the extract has only as <TDBID:HEX> is named from any known string whose CRC32 and length match: the
-extract's own dotted strings and the strings of each --names-from database.
+A TweakDBID the extract has only as <TDBID:HEX> is named from any known string whose CRC32 and length match:
+build/known-tweakdb-names.txt, the extract's own dotted strings and the strings of each --names-from database.
+known-tweakdb-names.txt holds names WolvenKit does not ship, for records no TweakDB file holds; they were read from
+extracts whose server had met the text elsewhere.
 
 world.db holds the world's data outside sector files, and `files`: every file under a worlds folder with its size and
 content hash, read from the game's own .archive indexes, so a baked or opaque file that has no table of its own is still
@@ -128,10 +130,12 @@ def tweakdb_id(text):
 
 
 def learn_names(src, names_from, counts):
-    """Fill NAMES for the TweakDBIDs the extract writes as <TDBID:...>, from the extract's own dotted strings and the
-    strings of the databases names_from names. WolvenKit's JSON already names every TweakDBID its own list holds, so a
-    TweakDB record listing adds none."""
+    """Fill NAMES for the TweakDBIDs the extract writes as <TDBID:...>, from known-tweakdb-names.txt, the extract's own
+    dotted strings and the strings of the databases names_from names. WolvenKit's JSON already names every TweakDBID its
+    own list holds, so a TweakDB record listing adds none."""
     wanted, candidates = set(), set()
+    with open(os.path.join(HERE, "known-tweakdb-names.txt"), encoding="utf-8") as f:
+        candidates.update(line.strip() for line in f if line.strip())
     for path in glob.glob(os.path.join(src, "*.ndjson")):
         with open(path, encoding="utf-8") as f:
             for line in f:
