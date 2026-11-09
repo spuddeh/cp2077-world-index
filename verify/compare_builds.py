@@ -95,7 +95,9 @@ def query(con, table):
                 out.append(f"t.{c} AS {c}")
     names = [o.rsplit(" AS ", 1)[1] for o in out]
     order = ", ".join(names)
-    where = ("WHERE t.key NOT IN (" + ", ".join(f"'{k}'" for k in SKIP_META) + ")") if table == "meta" else ""
+    # A version database keeps each edition's build record under ep1_ and base_.
+    skip = [f"'{p}{k}'" for k in SKIP_META for p in ("", "ep1_", "base_")]
+    where = ("WHERE t.key NOT IN (" + ", ".join(skip) + ")") if table == "meta" else ""
     sql = f'SELECT {", ".join(out)} FROM "{table}" t {" ".join(joins)} {where} ORDER BY {order}'
     return sql, names
 
