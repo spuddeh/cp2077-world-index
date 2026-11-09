@@ -1,12 +1,12 @@
 """Compares the world-files extract with the same files read straight from the game's .archive bytes, with no WolvenKit code.
 
-    python verify/world_check.py --game-dir "<game install>" --src <extract>/2.5-ep1/world [--edition base] [--db out/2.5-ep1/world.db]
+    python verify/world_check.py --game-dir "<game install>" --src <extract>/2.5-ep1/world [--edition base] [--db out/2.5-ep1/world-index.db]
 
 Reads each CR2W file's properties from their own names and types, and the custom data of loot, devices, lane polygons, lane
 connections and persistent state from their layouts, then compares every value with the extract. A NodeRef is compared by
 text: one that names the same node in another spelling is counted as "NodeRef text taken from another NodeRef with the same
-hash" and fails the check. With --db, also checks that world.db holds one row for each element of the extract, and that each
-community spot NodeRef in world.db is its file's text. --tamper changes one value per file before comparing, to prove
+hash" and fails the check. With --db, also checks that the database holds one row for each element of the extract, and that
+each community spot NodeRef in it is its file's text. --tamper changes one value per file before comparing, to prove
 the comparison can fail. Exits 1 on any difference.
 """
 import argparse
@@ -591,7 +591,7 @@ class Compare:
 
 
 def community_spots(template):
-    """(entry, phase, period) -> the spot NodeRef list of each, from entries and crowdEntries, which world.db numbers alike."""
+    """(entry, phase, period) -> the spot NodeRef list of each, from entries and crowdEntries, which community_periods numbers alike."""
     out = collections.defaultdict(list)
     for key in ("entries", "crowdEntries"):
         for e, entry in enumerate((template or {}).get(key) or []):
@@ -613,7 +613,7 @@ def main():
     ap.add_argument("--game-dir", required=True)
     ap.add_argument("--src", required=True, help="the world folder of an extract, e.g. <extract>/2.5-ep1/world")
     ap.add_argument("--edition", default="ep1", choices=["ep1", "base"])
-    ap.add_argument("--db", help="the world.db built from this extract")
+    ap.add_argument("--db", help="the world-index.db built from this extract")
     ap.add_argument("--only", help="compare only these kinds, comma-separated (world, mappins, loot, ..., inplace, smartobjects)")
     ap.add_argument("--tamper", action="store_true")
     a = ap.parse_args()
@@ -758,28 +758,28 @@ def main():
         for table, kinds in tables.items():
             want = sum(len(lines(os.path.join(a.src, f"{w}-{k}.ndjson"))) for w in ("03_night_city", "04_main_menu") for k in kinds)
             have = db.execute(f"SELECT count(*) FROM {table}").fetchone()[0]
-            cmp.stats["world.db tables checked"] += 1
+            cmp.stats["database tables checked"] += 1
             if want != have:
-                cmp.differ("world.db " + table, have, want)
+                cmp.differ("database " + table, have, want)
         want = sum(len(r["records"]) for w in ("03_night_city", "04_main_menu") for r in lines(os.path.join(a.src, f"{w}-loot.ndjson")))
         if db.execute("SELECT count(*) FROM loot").fetchone()[0] != want:
-            cmp.differ("world.db loot", "rows", want)
-        # world.db keeps each period's spot NodeRefs as JSON: compare them with the file's text, not the extract's.
+            cmp.differ("database loot", "rows", want)
+        # community_periods keeps each period's spot NodeRefs as JSON: compare them with the file's text, not the extract's.
         for path, e, ph, pe, refs in db.execute("SELECT path, entry, phase, period, spot_node_refs FROM community_periods"):
             if path not in spots:
                 continue
             refs = json.loads(refs) if refs else None
             for k, text in enumerate(refs or []):
-                cmp.stats["world.db spot NodeRefs compared"] += 1
+                cmp.stats["database spot NodeRefs compared"] += 1
                 here = {t for spot in spots[path].get((e, ph, pe), []) if k < len(spot) for t in [spot[k] or "0"]}
                 if text in here:
                     continue
                 if any(fnv(t.replace("#", "").split(";", 1)[0]) == fnv(text.replace("#", "").split(";", 1)[0]) for t in here):
-                    cmp.stats["NodeRef text in world.db not the file's"] += 1
+                    cmp.stats["NodeRef text in the database not the file's"] += 1
                     if len(cmp.bad) < 40:
-                        cmp.bad.append((f"world.db {path} {e}.{ph}.{pe}[{k}]", text[-60:], sorted(here)[0][-60:]))
+                        cmp.bad.append((f"database {path} {e}.{ph}.{pe}[{k}]", text[-60:], sorted(here)[0][-60:]))
                 else:
-                    cmp.differ(f"world.db {path} {e}.{ph}.{pe}[{k}]", sorted(here), text)
+                    cmp.differ(f"database {path} {e}.{ph}.{pe}[{k}]", sorted(here), text)
 
     print(json.dumps(cmp.stats, sort_keys=True), "seconds", round(time.time() - started))
     print("properties files leave at their class default, by class and name (top 8):", cmp.defaults.most_common(8))

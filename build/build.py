@@ -1,10 +1,11 @@
-"""Build core.db, full.db and the optional foliage.db for one game version from the extract's NDJSON.
+"""Build world-index.db for one game version and edition from the extract's NDJSON: sectors, placements, node
+references, outlines, plants and collision actors (build/schema.sql).
 
-    python build/build.py --game 2.5 --src <dump>/wscript/raw/world-index/2.5 --out out/2.5
+    python build/build.py --game 2.5 --src <dump>/wscript/raw/world-index/2.5-ep1 --out out/2.5-ep1
 
-All three have the same schema (build/schema.sql). A placement row goes to full.db when its node type is
-visual or physical data (meshes, decals, lights, foliage, water, collision, ...) and to core.db otherwise. Node
-references and outlines follow their node's database. foliage.db holds one row per plant, from foliage-*.ndjson.
+It writes a new database, so build_world.py, which adds the world-file tables to it, runs after it. A placement is
+visual (nodes.visual = 1) when its node type is visual or physical data: meshes, decals, lights, foliage, water,
+collision and the like. Plants come from foliage-*.ndjson, one row each.
 """
 import argparse
 import datetime
@@ -16,12 +17,13 @@ import re
 import sqlite3
 import subprocess
 
-SCHEMA_VERSION = 7
+SCHEMA_VERSION = 8
+BACKSLASH = chr(92)
 ARRAY_INDEX = re.compile(r"\[(\d+)\]")
 HERE = os.path.dirname(os.path.abspath(__file__))
 
-# A type whose name matches goes to full.db. Matched against the entry type when the row is a cooked entry.
-FULL = re.compile(r"Mesh|Decal|Foliage|Water|Acoustic|Collision|Light|Particle|Occluder|Terrain|GINode|GISpace"
+# A type whose name matches is visual. Matched against the entry type when the row is a cooked entry.
+VISUAL = re.compile(r"Mesh|Decal|Foliage|Water|Acoustic|Collision|Light|Particle|Occluder|Terrain|GINode|GISpace"
                   r"|Reflection|Effect|Destruction|Rotating|Advertisement|Cable|Fog|Clouds|Wind|Weather")
 
 
@@ -31,52 +33,6 @@ def fnv1a64(text):
         h ^= b
         h = (h * 0x100000001b3) & 0xffffffffffffffff
     return h
-
-
-class Collisions:
-    """collisions.db: one row per actor of each collision and foliage destruction node, in world space."""
-
-    def __init__(self, path):
-        if os.path.exists(path):
-            os.remove(path)
-        self.con = sqlite3.connect(path)
-        self.con.execute("PRAGMA journal_mode = OFF")
-        self.con.execute("PRAGMA synchronous = OFF")
-        self.con.executescript("""
-            CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT);
-            CREATE TABLE sectors (id INTEGER PRIMARY KEY, path TEXT);
-            CREATE TABLE actors (sector_id INTEGER, node_idx INTEGER, row_idx INTEGER, instance_index INTEGER, actor_no INTEGER,
-                x REAL, y REAL, z REAL, qi REAL, qj REAL, qk REAL, qr REAL, sx REAL, sy REAL, sz REAL, shape_count INTEGER);
-            CREATE VIRTUAL TABLE sectors_rtree USING rtree (id, min_x, max_x, min_y, max_y);
-        """)
-        self.rows = []
-        self.count = 0
-        self.sectors = {}
-
-    def add(self, sid, path, entries):
-        for row, node, entry, actors in entries:
-            if sid not in self.sectors:
-                self.sectors[sid] = path
-            for k, t in enumerate(actors):
-                self.rows.append((sid, node, row, entry if entry >= 0 else None, k, *t))
-            self.count += len(actors)
-        if len(self.rows) > 200000:
-            self.flush()
-
-    def flush(self):
-        self.con.executemany("INSERT INTO actors VALUES (" + ",".join("?" * 16) + ")", self.rows)
-        self.rows = []
-
-    def close(self, meta):
-        self.flush()
-        c = self.con
-        c.executemany("INSERT INTO sectors VALUES (?,?)", list(self.sectors.items()))
-        c.executemany("INSERT INTO meta VALUES (?,?)", list(meta.items()) + [("database", "collisions")])
-        c.execute("INSERT INTO sectors_rtree SELECT sector_id, MIN(x), MAX(x), MIN(y), MAX(y) FROM actors GROUP BY sector_id")
-        c.execute("CREATE INDEX actors_node ON actors (sector_id, node_idx)")
-        c.commit()
-        c.execute("VACUUM")
-        c.close()
 
 
 class Db:
@@ -93,7 +49,11 @@ class Db:
         self.nodes = []
         self.refs = []
         self.outlines = []
+        self.plants = []
+        self.actors = []
         self.next_id = 1
+        self.next_plant = 1
+        self.actor_count = 0
 
     def s(self, text):
         if text is None:
@@ -106,10 +66,15 @@ class Db:
 
     def flush(self):
         c = self.con
-        c.executemany("INSERT INTO nodes VALUES (" + ",".join("?" * 28) + ")", self.nodes)
+        c.executemany("INSERT INTO nodes VALUES (" + ",".join("?" * 29) + ")", self.nodes)
         c.executemany("INSERT OR IGNORE INTO node_refs VALUES (?,?,?,?,?,?)", self.refs)
         c.executemany("INSERT INTO outlines VALUES (?,?,?,?)", self.outlines)
-        self.nodes, self.refs, self.outlines = [], [], []
+        c.executemany("INSERT INTO plants VALUES (" + ",".join("?" * 19) + ")", self.plants)
+        c.executemany("INSERT INTO collision_actors VALUES (" + ",".join("?" * 16) + ")", self.actors)
+        self.nodes, self.refs, self.outlines, self.plants, self.actors = [], [], [], [], []
+
+    def pending(self):
+        return len(self.nodes) + len(self.plants) + len(self.actors)
 
 
 def yaw_degrees(qi, qj, qk, qr):
@@ -162,7 +127,8 @@ def main():
                     help="ep1: the copy a game with Phantom Liberty loads; base: the copy a game without it loads")
     a = ap.parse_args()
     os.makedirs(a.out, exist_ok=True)
-    core, full = Db(os.path.join(a.out, "core.db")), Db(os.path.join(a.out, "full.db"))
+    out_path = os.path.join(a.out, "world-index.db")
+    db = Db(out_path)
 
     with open(os.path.join(a.src, "sectors.json"), encoding="utf-8") as f:
         descriptors = {d["path"]: d for d in json.load(f)}
@@ -174,7 +140,6 @@ def main():
     audit = {"nodes": 0, "rows": 0, "rowsNoNode": 0, "emptyChunks": 0, "walkCut": 0, "walkErrors": 0, "outlineBad": 0,
              "instanceSplit": 0, "occluderShear": 0, "occluderNonFinite": 0, "occluderUnread": 0, "occluderMismatch": 0,
              "collisionUnread": 0}
-    collisions = Collisions(os.path.join(a.out, "collisions.db"))
     read_errors, analyze_errors, unplaced = {}, {}, {}
     for part in parts:
         with open(part, encoding="utf-8") as f:
@@ -194,15 +159,19 @@ def main():
                 for n in s["nodes"]:
                     if n.get("u"):
                         unplaced[n["t"]] = unplaced.get(n["t"], 0) + 1
-                collisions.add(sid, path, s.get("collisions") or [])
+                for row, node_idx, entry, actors in s.get("collisions") or []:
+                    db.sectors.add(sid)
+                    for k, t in enumerate(actors):
+                        db.actors.append((sid, node_idx, row, entry if entry >= 0 else None, k, *t))
+                    db.actor_count += len(actors)
                 nodes = {n["i"]: n for n in s["nodes"]}
                 starts = s.get("variantIndices") or []
-                placed_in = {}   # node index -> (db, first placement id, row)
+                placed = set()   # node indexes with a placement
                 for r in s["rows"]:
                     (row, idx, inst, entry, gid, x, y, z, qi, qj, qk, qr, sx, sy, sz, res, app, dist, instances, _) = r
                     node = nodes.get(idx, {})
                     ntype = node.get("t", "?")
-                    db = full if FULL.search(entry or ntype) else core
+                    visual = 1 if VISUAL.search(entry or ntype) else 0
                     if instances:
                         # An instanced mesh, destructible or occluder: one placement per instance, at its own transform.
                         transforms = [(t, k, "instance") for k, t in enumerate(instances)]
@@ -222,16 +191,15 @@ def main():
                                          signed64(gid), px, py, pz, round(yaw_degrees(pi, pj, pk, pr), 2),
                                          pi, pj, pk, pr, psx, psy, psz,
                                          db.s(res), db.s(app), db.s(node.get("tpl")), db.s(node.get("app")),
-                                         db.s(node.get("d")), variant_of(row, starts), dist, number, source))
-                        if idx not in placed_in:
-                            placed_in[idx] = (db, pid)
+                                         db.s(node.get("d")), variant_of(row, starts), dist, number, source, visual))
+                        placed.add(idx)
                     ol = node.get("outline")
                     if ol and source == "row":
                         pts = [rotate((qi, qj, qk, qr), (p[0] * sx, p[1] * sy, p[2] * sz)) for p in ol["p"]]
                         pts = [[round(x + px, 3), round(y + py, 3), round(z + pz, 3)] for px, py, pz in pts]
                         db.outlines.append((pid, ol["h"] * sz, json.dumps(pts, separators=(",", ":")),
                                             json.dumps(ol["p"], separators=(",", ":"))))
-                for idx, (db, pid) in placed_in.items():
+                for idx in placed:
                     node = nodes.get(idx, {})
                     for kind, at, value in node.get("refs", []):
                         if kind in ("gid", "eid"):
@@ -239,43 +207,30 @@ def main():
                         positions = ARRAY_INDEX.findall(at)
                         db.refs.append((sid, idx, kind, db.s(ARRAY_INDEX.sub("[]", at)),
                                         ",".join(positions), db.s(value)))
-                for db in (core, full):
-                    if len(db.nodes) > 200000:
-                        db.flush()
-        print(f"{os.path.basename(part)}: core {core.next_id - 1:,} full {full.next_id - 1:,}", flush=True)
+                if db.pending() > 200000:
+                    db.flush()
+        print(f"{os.path.basename(part)}: placements {db.next_id - 1:,} collision actors {db.actor_count:,}", flush=True)
 
-    # foliage.db: one placement per plant of each worldFoliageNode, from an ONLY = "foliage" extract. The foliage
-    # node itself stays in full.db; its plants live here so full.db keeps its size.
-    dbs = [("core", core), ("full", full)]
-    foliage_path = os.path.join(a.out, "foliage.db")
-    foliage_parts = sorted(glob.glob(os.path.join(a.src, "foliage-*.ndjson")))
-    if foliage_parts:
-        foliage = Db(foliage_path)
-        dbs.append(("foliage", foliage))
-        for part in foliage_parts:
-            with open(part, encoding="utf-8") as f:
-                for line in f:
-                    if not line.strip():
+    # One row per plant of each worldFoliageNode, from an ONLY = "foliage" extract.
+    for part in sorted(glob.glob(os.path.join(a.src, "foliage-*.ndjson"))):
+        with open(part, encoding="utf-8") as f:
+            for line in f:
+                if not line.strip():
+                    continue
+                s = json.loads(line)
+                sid = sector_ids[s["path"]]
+                starts = s.get("variantIndices") or []
+                for row, idx, mesh, app, plants in s["rows"]:
+                    if not plants:
                         continue
-                    s = json.loads(line)
-                    sid = sector_ids[s["path"]]
-                    starts = s.get("variantIndices") or []
-                    for row, idx, mesh, app, plants in s["rows"]:
-                        if not plants:
-                            continue
-                        foliage.sectors.add(sid)
-                        for number, (x, y, z, qi, qj, qk, qr, sx, sy, sz) in enumerate(plants):
-                            pid = foliage.next_id
-                            foliage.next_id += 1
-                            foliage.nodes.append((pid, sid, idx, row, None, foliage.s("worldFoliageNode"), None, None,
-                                                  x, y, z, round(yaw_degrees(qi, qj, qk, qr), 2), qi, qj, qk, qr,
-                                                  sx, sy, sz, foliage.s(mesh), foliage.s(app), None, None, None,
-                                                  variant_of(row, starts), None, number, "instance"))
-                    if len(foliage.nodes) > 200000:
-                        foliage.flush()
-            print(f"{os.path.basename(part)}: foliage {foliage.next_id - 1:,}", flush=True)
-    elif os.path.exists(foliage_path):
-        os.remove(foliage_path)   # a foliage.db from an earlier build would not match this one
+                    db.sectors.add(sid)
+                    for number, (x, y, z, qi, qj, qk, qr, sx, sy, sz) in enumerate(plants):
+                        db.plants.append((db.next_plant, sid, idx, row, number, x, y, z, round(yaw_degrees(qi, qj, qk, qr), 2),
+                                          qi, qj, qk, qr, sx, sy, sz, db.s(mesh), db.s(app), variant_of(row, starts)))
+                        db.next_plant += 1
+                if db.pending() > 200000:
+                    db.flush()
+        print(f"{os.path.basename(part)}: plants {db.next_plant - 1:,}", flush=True)
 
     print("audit", json.dumps(audit), flush=True)
     print("nodes no row places", json.dumps(unplaced, sort_keys=True), flush=True)
@@ -286,59 +241,53 @@ def main():
             "built_utc": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
             "build_commit": git_commit() or "", "sectors_read": str(len(read)),
             "sectors_listed": str(len(descriptors))}
-    collisions.close(meta)
-    print(f"collisions.db: {collisions.count:,} actors, {os.path.getsize(os.path.join(a.out, 'collisions.db')) / 1e6:,.0f} MB")
     known = {}
     for other in a.names_from:
         o = sqlite3.connect(f"file:{other}?immutable=1", uri=True)
         for (text,) in o.execute("SELECT text FROM strings"):
             known[fnv1a64(text)] = text
         o.close()
-    for _, db in dbs:
-        for text in db.strings:
-            if not text.isdigit():
-                known[fnv1a64(text)] = text
-    for name, db in dbs:
-        db.flush()
-        c = db.con
-        hashes = [(sid, known[int(t)]) for t, sid in list(db.strings.items()) if t.isdigit() and int(t) in known]
-        if hashes:
-            c.execute("CREATE TEMP TABLE named (old INTEGER PRIMARY KEY, new INTEGER)")
-            c.executemany("INSERT INTO named VALUES (?,?)", [(sid, db.s(text)) for sid, text in hashes])
-            c.execute("UPDATE nodes SET appearance_id = (SELECT new FROM named WHERE old = appearance_id) WHERE appearance_id IN (SELECT old FROM named)")
-            c.execute("DROP TABLE named")
-        left = sum(1 for t in db.strings if t.isdigit() and int(t) not in known)
-        print(f"{name}: appearance hashes named {len(hashes):,}, strings still a number {left:,}")
-        c.executemany("INSERT INTO strings VALUES (?,?)", ((i, t) for t, i in db.strings.items()))
-        for path, d in descriptors.items():
-            sid = sector_ids[path]
-            if sid not in db.sectors:
-                continue
-            lo, hi = d.get("min") or [None] * 3, d.get("max") or [None] * 3
-            c.execute("INSERT INTO sectors VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-                      (sid, db.s(path), path.split("\\")[2], d.get("block"), d["category"], d["level"],
-                       db.s(d.get("prefab")),
-                       *lo, *hi, json.dumps(d.get("variants") or [], separators=(",", ":"))))
-        # Strings added while writing sectors.
-        c.executemany("INSERT OR IGNORE INTO strings VALUES (?,?)", ((i, t) for t, i in db.strings.items()))
-        c.executemany("INSERT INTO meta VALUES (?,?)", list(meta.items()) + [("database", name)])
-        # The box around each sector's placements in this database: a quest sector's streaming box is infinite.
-        c.execute("""INSERT INTO sectors_rtree SELECT sector_id, MIN(x), MAX(x), MIN(y), MAX(y) FROM nodes GROUP BY sector_id""")
-        # full.db and foliage.db find placements near a point through sectors_rtree, then nodes_sector: a
-        # per-placement tree over millions of mesh rows or plants would be a third of the file. Same for type indexes.
-        indexes = "indexes.sql"
-        if name == "core":
-            c.execute("INSERT INTO nodes_rtree SELECT id, x, x, y, y FROM nodes")
-        else:
-            c.execute("DROP TABLE nodes_rtree")
-            indexes = "indexes-full.sql"
-        with open(os.path.join(HERE, indexes), encoding="utf-8") as f:
-            c.executescript(f.read())
-        c.commit()
-        c.execute("VACUUM")
-        c.close()
-        size = os.path.getsize(os.path.join(a.out, name + ".db"))
-        print(f"{name}.db: {db.next_id - 1:,} placements, {size / 1e6:,.0f} MB")
+    for text in db.strings:
+        if not text.isdigit():
+            known[fnv1a64(text)] = text
+    db.flush()
+    c = db.con
+    hashes = [(sid, known[int(t)]) for t, sid in list(db.strings.items()) if t.isdigit() and int(t) in known]
+    if hashes:
+        c.execute("CREATE TEMP TABLE named (old INTEGER PRIMARY KEY, new INTEGER)")
+        c.executemany("INSERT INTO named VALUES (?,?)", [(sid, db.s(text)) for sid, text in hashes])
+        for table in ("nodes", "plants"):
+            c.execute(f"UPDATE {table} SET appearance_id = (SELECT new FROM named WHERE old = appearance_id) "
+                      "WHERE appearance_id IN (SELECT old FROM named)")
+        c.execute("DROP TABLE named")
+    left = sum(1 for t in db.strings if t.isdigit() and int(t) not in known)
+    print(f"appearance hashes named {len(hashes):,}, strings still a number {left:,}")
+    for path, d in descriptors.items():
+        sid = sector_ids[path]
+        if sid not in db.sectors:
+            continue
+        lo, hi = d.get("min") or [None] * 3, d.get("max") or [None] * 3
+        c.execute("INSERT INTO sectors VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                  (sid, db.s(path), path.split(BACKSLASH)[2], d.get("block"), d["category"], d["level"],
+                   db.s(d.get("prefab")),
+                   *lo, *hi, json.dumps(d.get("variants") or [], separators=(",", ":"))))
+    c.executemany("INSERT INTO strings VALUES (?,?)", ((i, t) for t, i in db.strings.items()))
+    c.executemany("INSERT INTO meta VALUES (?,?)", list(meta.items()))
+    # The box around everything each sector has: a quest sector's streaming box is infinite.
+    c.execute("""INSERT INTO sectors_rtree SELECT sector_id, MIN(lo_x), MAX(hi_x), MIN(lo_y), MAX(hi_y) FROM (
+                     SELECT sector_id, MIN(x) lo_x, MAX(x) hi_x, MIN(y) lo_y, MAX(y) hi_y FROM nodes GROUP BY sector_id
+                     UNION ALL SELECT sector_id, MIN(x), MAX(x), MIN(y), MAX(y) FROM plants GROUP BY sector_id
+                     UNION ALL SELECT sector_id, MIN(x), MAX(x), MIN(y), MAX(y) FROM collision_actors GROUP BY sector_id)
+                 GROUP BY sector_id""")
+    # A tree per placement only for the non-visual ones: over millions of mesh rows it would be a third of the file.
+    c.execute("INSERT INTO nodes_rtree SELECT id, x, x, y, y FROM nodes WHERE visual = 0")
+    with open(os.path.join(HERE, "indexes.sql"), encoding="utf-8") as f:
+        c.executescript(f.read())
+    c.commit()
+    c.execute("VACUUM")
+    c.close()
+    print(f"world-index.db: {db.next_id - 1:,} placements, {db.next_plant - 1:,} plants, {db.actor_count:,} collision actors, "
+          f"{os.path.getsize(out_path) / 1e6:,.0f} MB")
     missing = sorted(set(descriptors) - read)
     print(f"sectors read {len(read):,} of {len(descriptors):,}; not read: {missing[:10]}")
 

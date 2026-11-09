@@ -1,4 +1,4 @@
-"""Sets each sector NodeRef in a built 2.5 index to the text its sector file stores, and each community spot NodeRef in world.db.
+"""Sets each sector NodeRef in a built 2.5 index to the text its sector file stores, and each community spot NodeRef too.
 
     python build/fix_noderefs.py --game-dir "<game install>" --db out/2.5-ep1 [--edition base] [--dry-run]
 
@@ -6,8 +6,9 @@ WolvenKit 10 keeps a NodeRef as its hash (FNV1a64 with '#' removed, up to any ';
 has met, which can be another spelling of the file's. This reads every sector with a `ref` row from the game's archives, with no
 WolvenKit code, collects the NodeRef texts each node stores (its own properties, the handles it holds and the packages and CR2W
 files in its buffers), and replaces a value that is not one of them with the node's text of the same hash. A value with no such
-text is left as it is and counted. An empty NodeRef ("0") is not a text and is skipped. It edits the databases in place and writes
-`noderefs_corrected` and `noderefs_left` into each one's meta.
+text is left as it is and counted. An empty NodeRef ("0") is not a text and is skipped. It edits world-index.db in place and writes
+`noderefs_corrected` and `noderefs_left` (node_refs) and `community_noderefs_corrected` and `community_noderefs_left`
+(community_periods) into its meta. Run it after build.py and build_world.py.
 """
 import argparse
 import collections
@@ -146,7 +147,7 @@ def fix_sectors(db_path, winner, dry_run, stats):
 
 def community_refs(f):
     """The spot NodeRefs of a .community file at each place (entry, phase, period, spot), from entries and crowdEntries,
-    which world.db numbers alike."""
+    which community_periods numbers alike."""
     template = f.chunk(0).get("communityTemplate") or {}
     out = collections.defaultdict(set)
     for key in ("entries", "crowdEntries"):
@@ -194,7 +195,8 @@ def fix_world(db_path, winner, dry_run, stats):
             changes.append((json.dumps(refs, ensure_ascii=False, separators=(",", ":")), rowid))
     if not dry_run:
         c.executemany("UPDATE community_periods SET spot_node_refs = ? WHERE rowid = ?", changes)
-        c.executemany("INSERT OR REPLACE INTO meta VALUES (?,?)", [("noderefs_corrected", str(corrected)), ("noderefs_left", str(left))])
+        c.executemany("INSERT OR REPLACE INTO meta VALUES (?,?)", [("community_noderefs_corrected", str(corrected)),
+                                                                   ("community_noderefs_left", str(left))])
         c.commit()
     c.close()
     return corrected, left
@@ -207,27 +209,25 @@ class Stats(collections.Counter):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--game-dir", required=True)
-    ap.add_argument("--db", required=True, help="an index folder, e.g. out/2.5-ep1")
+    ap.add_argument("--db", required=True, help="an index folder, e.g. out/2.5-ep1, holding world-index.db")
     ap.add_argument("--edition", default="ep1", choices=["ep1", "base"])
     ap.add_argument("--dry-run", action="store_true", help="count, change nothing")
     a = ap.parse_args()
     load_oodle(a.game_dir)
     winner = game_files(a.game_dir, a.edition)
-    for name in ("core", "full"):
-        stats = Stats()
-        stats.examples = []
-        corrected, left = fix_sectors(os.path.join(a.db, name + ".db"), winner, a.dry_run, stats)
-        print(name, "corrected", corrected, "left", left, json.dumps(stats, sort_keys=True))
-        for e in stats.examples:
-            print("  ", e)
-    world = os.path.join(a.db, "world.db")
-    if os.path.exists(world):
-        stats = Stats()
-        stats.examples = []
-        corrected, left = fix_world(world, winner, a.dry_run, stats)
-        print("world corrected", corrected, "left", left, json.dumps(stats, sort_keys=True))
-        for e in stats.examples[:8]:
-            print("  ", e)
+    path = os.path.join(a.db, "world-index.db")
+    stats = Stats()
+    stats.examples = []
+    corrected, left = fix_sectors(path, winner, a.dry_run, stats)
+    print("sectors corrected", corrected, "left", left, json.dumps(stats, sort_keys=True))
+    for e in stats.examples:
+        print("  ", e)
+    stats = Stats()
+    stats.examples = []
+    corrected, left = fix_world(path, winner, a.dry_run, stats)
+    print("community corrected", corrected, "left", left, json.dumps(stats, sort_keys=True))
+    for e in stats.examples[:8]:
+        print("  ", e)
 
 
 if __name__ == "__main__":

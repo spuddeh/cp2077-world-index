@@ -9,7 +9,7 @@ A row present in one build only is listed with its table's identity columns. Whe
 columns that differ are named and counted, so a difference reads as "nodes.resource: 12 rows" rather than as a pair
 of rows to compare by eye.
 
-    python verify/compare_builds.py --old out/2.31-ep1 --new <dir> [--db core full collisions foliage world smartobjects] [--show 5]
+    python verify/compare_builds.py --old out/2.31-ep1 --new <dir> [--tables nodes plants ...] [--show 5]
 
 A table with no IDENTITY entry (sector_inplace, cooked_prefabs, smart_object_members) is matched on every column, so a
 changed row shows as one row only in old and one only in new.
@@ -27,6 +27,7 @@ STRING_IDS = {
     "nodes": ["type_id", "entry_type_id", "resource_id", "appearance_id", "template_id", "entity_appearance_id",
               "debug_id"],
     "node_refs": ["path_id", "value_id"],
+    "plants": ["resource_id", "appearance_id"],
 }
 
 # The columns that say which row this is; the rest are its values.
@@ -35,9 +36,10 @@ IDENTITY = {
     "nodes": ["sector", "row_idx", "instance_index", "instance_no", "node_idx"],
     "node_refs": ["sector", "node_idx", "kind", "path", "idx", "value"],
     "outlines": ["sector", "row_idx", "instance_index", "instance_no"],
-    "actors": ["sector", "row_idx", "instance_index", "actor_no", "node_idx"],
+    "plants": ["sector", "row_idx", "plant_no", "node_idx"],
+    "collision_actors": ["sector", "row_idx", "instance_index", "actor_no", "node_idx"],
     "meta": ["key"],
-    # world.db and smartobjects.db: no string ids, so only the identity is needed.
+    # The world-file tables: no string ids, so only the identity is needed.
     "files": ["path"],
     "world_resources": ["world"],
     "mappins": ["world", "kind", "idx"],
@@ -61,14 +63,14 @@ IDENTITY = {
     "smart_objects": ["path", "idx"],
 }
 
-SKIP_META = {"built", "build_seconds", "built_utc", "source", "build_commit"}
+SKIP_META = {"built", "build_seconds", "built_utc", "source", "build_commit", "world_built_utc", "world_build_commit"}
 
 
 def columns(con, table):
     return [r[1] for r in con.execute(f'PRAGMA table_info("{table}")')]
 
 
-def query(con, table, has_strings):
+def query(con, table):
     """A SELECT giving the table's rows by value, its column names, ordered by every column."""
     cols = columns(con, table)
     out, joins = [], []
@@ -83,13 +85,9 @@ def query(con, table, has_strings):
             if c == "id":
                 continue
             if c == "sector_id":
-                if has_strings:
-                    joins.append("JOIN sectors s ON s.id = t.sector_id JOIN strings sp ON sp.id = s.path_id")
-                    out.append("sp.text AS sector")
-                else:
-                    joins.append("JOIN sectors s ON s.id = t.sector_id")
-                    out.append("s.path AS sector")
-            elif has_strings and c in STRING_IDS.get(table, []):
+                joins.append("JOIN sectors s ON s.id = t.sector_id JOIN strings sp ON sp.id = s.path_id")
+                out.append("sp.text AS sector")
+            elif c in STRING_IDS.get(table, []):
                 alias = "j_" + c
                 joins.append(f"LEFT JOIN strings {alias} ON {alias}.id = t.{c}")
                 out.append(f"{alias}.text AS {c[:-3]}")
@@ -107,9 +105,9 @@ def key(row):
     return tuple((0, 0) if v is None else (1, v) if isinstance(v, (int, float)) else (2, v) for v in row)
 
 
-def compare_table(old, new, table, has_strings, show):
-    sql_old, names_old = query(old, table, has_strings)
-    sql_new, names_new = query(new, table, has_strings)
+def compare_table(old, new, table, show):
+    sql_old, names_old = query(old, table)
+    sql_new, names_new = query(new, table)
     if names_old != names_new:
         print(f"  {table}: columns differ: {names_old} / {names_new}")
         return 1
@@ -164,23 +162,16 @@ def main():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--old", required=True)
     p.add_argument("--new", required=True)
-    p.add_argument("--db", nargs="*", default=["core", "full", "collisions", "foliage"])
+    p.add_argument("--tables", nargs="*", help="only these tables (default: every table but strings and the trees)")
     p.add_argument("--show", type=int, default=5)
     a = p.parse_args()
     faults = 0
-    for name in a.db:
-        po, pn = os.path.join(a.old, name + ".db"), os.path.join(a.new, name + ".db")
-        if not (os.path.exists(po) and os.path.exists(pn)):
-            print(f"{name}.db: not in both builds, skipped")
-            continue
-        old = sqlite3.connect(f"file:{po}?mode=ro", uri=True)
-        new = sqlite3.connect(f"file:{pn}?mode=ro", uri=True)
-        tables = [r[0] for r in old.execute("SELECT name FROM sqlite_master WHERE type = 'table'")
-                  if r[0] != "strings" and "rtree" not in r[0]]
-        has_strings = "strings" in [r[0] for r in old.execute("SELECT name FROM sqlite_master WHERE type = 'table'")]
-        print(f"{name}.db")
-        for table in tables:
-            faults += compare_table(old, new, table, has_strings, a.show)
+    old = sqlite3.connect(f"file:{os.path.join(a.old, 'world-index.db')}?mode=ro", uri=True)
+    new = sqlite3.connect(f"file:{os.path.join(a.new, 'world-index.db')}?mode=ro", uri=True)
+    tables = [r[0] for r in old.execute("SELECT name FROM sqlite_master WHERE type = 'table'")
+              if r[0] != "strings" and "rtree" not in r[0]]
+    for table in a.tables or tables:
+        faults += compare_table(old, new, table, a.show)
     print("the same" if faults == 0 else f"{faults} table(s) differ")
     sys.exit(1 if faults else 0)
 

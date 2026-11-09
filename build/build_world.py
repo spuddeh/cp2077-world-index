@@ -1,14 +1,17 @@
-"""Build world.db and the optional smartobjects.db for one game version and edition from world-files.wscript's output.
+"""Add the world-file tables to world-index.db for one game version and edition, from world-files.wscript's output.
 
     python build/build_world.py --game 2.5 --edition ep1 --game-dir "<game install>" --src <extract>/2.5-ep1/world --out out/2.5-ep1
-        [--names-from out/2.5-ep1/full.db]
+        [--names-from out/2.5-ep1/world-index.db]
+
+build.py writes world-index.db first. This replaces only its own tables and its world_ keys in meta, so it can run again
+on its own.
 
 A TweakDBID the extract has only as <TDBID:HEX> is named from any known string whose CRC32 and length match:
 build/known-tweakdb-names.txt, the extract's own dotted strings and the strings of each --names-from database.
 known-tweakdb-names.txt holds names WolvenKit does not ship, for records no TweakDB file holds; they were read from
 extracts whose server had met the text elsewhere.
 
-world.db holds the world's data outside sector files, and `files`: every file under a worlds folder with its size and
+The tables hold the world's data outside sector files, and `files`: every file under a worlds folder with its size and
 content hash, read from the game's own .archive indexes, so a baked or opaque file that has no table of its own is still
 listed. Values are stored as the game has them. A column named data holds the rest of an element as JSON.
 """
@@ -24,11 +27,9 @@ import struct
 import subprocess
 import zlib
 
-SCHEMA_VERSION = 2
 HERE = os.path.dirname(os.path.abspath(__file__))
 
 SCHEMA = """
-CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT);
 CREATE TABLE files (path TEXT PRIMARY KEY, extension TEXT, archive TEXT, size INTEGER, disk_size INTEGER, sha1 TEXT, in_tables INTEGER);
 CREATE TABLE world_resources (world TEXT PRIMARY KEY, data TEXT);
 CREATE TABLE mappins (world TEXT, idx INTEGER, kind TEXT, journal_path_hash INTEGER, x REAL, y REAL, z REAL, data TEXT);
@@ -77,7 +78,6 @@ CREATE INDEX community_character ON community_entries (character);
 CREATE INDEX community_periods_path ON community_periods (path, entry);
 """
 SMART_SCHEMA = """
-CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT);
 CREATE TABLE smart_object_files (path TEXT PRIMARY KEY, box TEXT, properties TEXT, transforms TEXT, sequences TEXT);
 CREATE TABLE smart_objects (path TEXT, idx INTEGER, class TEXT, data TEXT);
 CREATE TABLE smart_object_members (path TEXT, hash TEXT, idx INTEGER);
@@ -186,13 +186,17 @@ def main():
     ap.add_argument("--names-from", action="append", default=[], metavar="DB",
                     help="a built database whose strings name TweakDBIDs the extract has only as <TDBID:...>")
     a = ap.parse_args()
-    os.makedirs(a.out, exist_ok=True)
-    path = os.path.join(a.out, "world.db")
-    if os.path.exists(path):
-        os.remove(path)
+    path = os.path.join(a.out, "world-index.db")
+    if not os.path.exists(path):
+        raise SystemExit(f"{path} does not exist: run build.py first")
     c = sqlite3.connect(path)
     c.execute("PRAGMA journal_mode = OFF")
     c.execute("PRAGMA synchronous = OFF")
+    replaced = 0
+    for table in re.findall(r"CREATE TABLE (\w+)", SCHEMA + SMART_SCHEMA):
+        replaced += c.execute("SELECT count(*) FROM sqlite_master WHERE type = 'table' AND name = ?", (table,)).fetchone()[0]
+        c.execute(f"DROP TABLE IF EXISTS {table}")
+    c.execute("DELETE FROM meta WHERE key LIKE 'world!_%' ESCAPE '!'")
     c.executescript(SCHEMA)
     src = a.src
     counts = collections.Counter()
@@ -315,24 +319,16 @@ def main():
                                 r["path"], e, ph, pe, phase.get("phaseName"), phase.get("alwaysSpawned"), dumps(phase.get("appearances")),
                                 period.get("hour"), period.get("quantity"), period.get("isSequence"), dumps(period.get("markings")), dumps(period.get("spotNodeRefs")), dumps(period.get("categories"))))
 
-    smart_parts = sorted(glob.glob(os.path.join(src, "smartobjects-*.ndjson")))
-    if smart_parts:
-        smart_path = os.path.join(a.out, "smartobjects.db")
-        if os.path.exists(smart_path):
-            os.remove(smart_path)
-        s = sqlite3.connect(smart_path)
-        s.execute("PRAGMA journal_mode = OFF")
-        s.execute("PRAGMA synchronous = OFF")
-        s.executescript(SMART_SCHEMA)
-        for part in smart_parts:
-            for r in lines(part):
-                counts["smart object files"] += 1
-                s.execute("INSERT INTO smart_object_files VALUES (?,?,?,?,?)", (r["path"], dumps(r["box"]), dumps(r["properties"]), dumps(r["transforms"]), dumps(r["sequences"])))
-                for k, n in enumerate((r["nodes"] or {}).get("compiledSmartObjects") or []):
-                    data = n.get("compiledData") or {}
-                    s.execute("INSERT INTO smart_objects VALUES (?,?,?,?)", (r["path"], k, data.get("$type"), dumps(n)))
-                    counts["smart objects"] += 1
-                s.executemany("INSERT INTO smart_object_members VALUES (?,?,?)", [(r["path"], m["hash"], m["index"]) for m in (r["members"] or {}).get("members") or []])
+    c.executescript(SMART_SCHEMA)
+    for part in sorted(glob.glob(os.path.join(src, "smartobjects-*.ndjson"))):
+        for r in lines(part):
+            counts["smart object files"] += 1
+            c.execute("INSERT INTO smart_object_files VALUES (?,?,?,?,?)", (r["path"], dumps(r["box"]), dumps(r["properties"]), dumps(r["transforms"]), dumps(r["sequences"])))
+            for k, n in enumerate((r["nodes"] or {}).get("compiledSmartObjects") or []):
+                data = n.get("compiledData") or {}
+                c.execute("INSERT INTO smart_objects VALUES (?,?,?,?)", (r["path"], k, data.get("$type"), dumps(n)))
+                counts["smart objects"] += 1
+            c.executemany("INSERT INTO smart_object_members VALUES (?,?,?)", [(r["path"], m["hash"], m["index"]) for m in (r["members"] or {}).get("members") or []])
 
     errors = []
     for f in glob.glob(os.path.join(src, "errors-*.json")):
@@ -343,19 +339,18 @@ def main():
         commit = subprocess.check_output(["git", "rev-parse", "--short", "HEAD"], cwd=HERE, text=True, stderr=subprocess.DEVNULL).strip()
     except (OSError, subprocess.CalledProcessError):
         pass
-    meta = {"game_version": a.game, "edition": a.edition, "schema_version": str(SCHEMA_VERSION), "database": "world",
-            "built_utc": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"), "build_commit": commit,
-            "counts": json.dumps(counts, sort_keys=True), "read_errors": json.dumps(errors)}
+    have = dict(c.execute("SELECT key, value FROM meta WHERE key IN ('game_version', 'edition')"))
+    if have != {"game_version": a.game, "edition": a.edition}:
+        raise SystemExit(f"{path} is the build of {have}, not {a.game} {a.edition}")
+    meta = {"world_built_utc": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "world_build_commit": commit, "world_counts": json.dumps(counts, sort_keys=True), "world_read_errors": json.dumps(errors)}
     c.executemany("INSERT INTO meta VALUES (?,?)", list(meta.items()))
     c.executescript(INDEXES)
     c.commit()
+    if replaced:
+        c.execute("VACUUM")   # the space of the tables this build replaced
     c.close()
-    if smart_parts:
-        s.executemany("INSERT INTO meta VALUES (?,?)", list({**meta, "database": "smartobjects"}.items()))
-        s.commit()
-        s.close()
-        print(f"smartobjects.db: {os.path.getsize(smart_path) / 1e6:,.0f} MB")
-    print(f"world.db: {os.path.getsize(path) / 1e6:,.0f} MB")
+    print(f"world-index.db: {os.path.getsize(path) / 1e6:,.0f} MB")
     print(json.dumps(counts, indent=1, sort_keys=True))
     print("files that could not be read:", json.dumps(errors)[:800])
 

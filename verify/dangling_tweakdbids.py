@@ -1,12 +1,12 @@
-"""List the TweakDBIDs a world.db references that its game's TweakDB has no record for, with every place each is used.
+"""List the TweakDBIDs a world-index.db references that its game's TweakDB has no record for, with every place each is used.
 
-    python verify/dangling_tweakdbids.py --db out/2.5-ep1/world.db --tweakdb "<game>/r6/cache/tweakdb_ep1.bin" --out <file>.csv
+    python verify/dangling_tweakdbids.py --db out/2.5-ep1/world-index.db --tweakdb "<game>/r6/cache/tweakdb_ep1.bin" --out <file>.csv
 
 The TweakDB file is read directly: its record table holds every record id, named or not. A reference is dangling when
 its id is in no row of that table. Uses read: loot records, community characters, and every TweakDBID held in persistent
 device state (the JSON key names the field). The CSV has one row per use: id as <TDBID:HEX>, its text when known, the
-use, the world file or loot node it comes from, and for a loot node the position of the node that holds it (from
---nodes, the same edition's core.db).
+use, the world file or loot node it comes from, and for a loot node the position of the node that holds it. --db is an
+edition build: in a version's database, a row of both editions would be read twice.
 """
 import argparse
 import collections
@@ -57,9 +57,8 @@ def tdbid_values(v, key=""):
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--db", required=True, help="a built world.db")
+    ap.add_argument("--db", required=True, help="a built world-index.db")
     ap.add_argument("--tweakdb", required=True, help="the TweakDB file that edition loads: tweakdb_ep1.bin or tweakdb.bin")
-    ap.add_argument("--nodes", help="the same edition's core.db, which holds the loot nodes, for their position")
     ap.add_argument("--out", required=True, help="the CSV to write")
     a = ap.parse_args()
     records = record_ids(a.tweakdb)
@@ -81,15 +80,13 @@ def main():
                 uses.append((i, text, f"persistent_states.{key}", f"{world} persistent {idx} {cls}", ""))
 
     where = {}
-    if a.nodes:
-        f = sqlite3.connect(f"file:{a.nodes}?mode=ro", uri=True)
-        # full.db keeps a global id as a signed 64-bit integer; loot keeps it as unsigned text.
-        nodes = {int(u[4]) - (1 << 64) if int(u[4]) >= 1 << 63 else int(u[4]) for u in uses if u[4]}
-        for gid, x, y, z, path in f.execute(
-                "SELECT n.global_id, n.x, n.y, n.z, s.text FROM nodes n JOIN sectors sc ON sc.id = n.sector_id "
-                "JOIN strings s ON s.id = sc.path_id WHERE n.global_id IS NOT NULL"):
-            if gid in nodes:
-                where[str(gid & 0xFFFFFFFFFFFFFFFF)] = (round(x, 2), round(y, 2), round(z, 2), path)
+    # nodes keeps a global id as a signed 64-bit integer; loot keeps it as unsigned text.
+    nodes = {int(u[4]) - (1 << 64) if int(u[4]) >= 1 << 63 else int(u[4]) for u in uses if u[4]}
+    for gid, x, y, z, path in w.execute(
+            "SELECT n.global_id, n.x, n.y, n.z, s.text FROM nodes n JOIN sectors sc ON sc.id = n.sector_id "
+            "JOIN strings s ON s.id = sc.path_id WHERE n.global_id IS NOT NULL"):
+        if gid in nodes:
+            where[str(gid & 0xFFFFFFFFFFFFFFFF)] = (round(x, 2), round(y, 2), round(z, 2), path)
 
     with open(a.out, "w", newline="", encoding="utf-8") as h:
         out = csv.writer(h)
@@ -104,8 +101,7 @@ def main():
     print(f"{len({u[0] for u in uses})} dangling ids, {len(uses)} uses, {len(records):,} records in {a.tweakdb}")
     for use, s in sorted(by_use.items(), key=lambda x: -len(x[1])):
         print(f"  {len(s):5} ids  {sum(1 for u in uses if u[2] == use):6} uses  {use}")
-    if a.nodes:
-        print(f"  loot nodes placed: {len(where)} of {len({u[4] for u in uses if u[4]})}")
+    print(f"  loot nodes placed: {len(where)} of {len({u[4] for u in uses if u[4]})}")
 
 
 if __name__ == "__main__":

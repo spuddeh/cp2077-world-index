@@ -6,3 +6,6 @@ CREATE INDEX nodes_entry_type ON nodes (entry_type_id) WHERE entry_type_id IS NO
 CREATE INDEX nodes_resource ON nodes (resource_id) WHERE resource_id IS NOT NULL;
 CREATE INDEX nodes_template ON nodes (template_id) WHERE template_id IS NOT NULL;
 CREATE INDEX refs_value ON node_refs (value_id);
+CREATE INDEX plants_sector ON plants (sector_id, node_idx);
+CREATE INDEX plants_resource ON plants (resource_id);
+CREATE INDEX actors_node ON collision_actors (sector_id, node_idx);
