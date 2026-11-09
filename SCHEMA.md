@@ -1,62 +1,77 @@
 # Schema
 
-Each edition of each game version is one folder of databases, named `<version>-<edition>`: `2.5-ep1`, `2.5-base`,
-`2.31-ep1`, `2.31-base`. `ep1` is the world a game with Phantom Liberty loads and `base` the world a game without it
-loads, the names the game's own `worldStreamingDataGroup` uses. A sector both ship can differ between them.
+Each game version is one database, `world-index.db`, in a folder named for the version: `2.5`, `2.31`. It holds both of the
+version's editions: `ep1`, the world a game with Phantom Liberty loads, and `base`, the world a game without it loads, the
+names the game's own `worldStreamingDataGroup` uses. Phantom Liberty ships its own copy of most base-game sectors, and a
+copy can add, remove, move or renumber nodes, so the two worlds differ even where they share a sector path.
 
-`core.db`, `full.db` and the optional `foliage.db` use this schema. `collisions.db` is described under
-[Collision actors](#collision-actors), and `world.db` and the optional `smartobjects.db`, which hold the world's files other
-than sectors, under [World files](#world-files). Any SQLite client opens them: `sqlite3`, DB Browser for
-SQLite, Python's `sqlite3` module. Every value is stored as the game stores it, in metres and degrees, with no
-encoding to undo.
+## Editions
 
-`core.db` holds entities, devices, smart objects, AI spots, markers, triggers and areas, community and crowd data,
-and every other node that is not visual or physical. `full.db` holds meshes, decals, lights, foliage, water,
-collision and the like. Each placement is in exactly one of them. `foliage.db` holds the plants of the foliage
-nodes in `full.db`: one row per plant, `type` `worldFoliageNode`, with the node's mesh, `node_idx` and `row_idx`,
-`instance_no` the plant's number and `position_source` `instance`. It has no `global_id`, `debug_id` or
-`streaming_distance`, and its `node_refs` and `outlines` tables are empty. Plant scale is stored as the file has it:
-on 2.5, 22,426 plants have a negative scale. Measured by their mesh's bounding box, 16,041 are under 1 cm across, 21,819 under
-5 cm and all but one under 50 cm. The game keeps them: a loaded foliage node counts every plant the file holds, negative ones
-included, and numbers them as `instance_no` does. None shows above ground: a negative scale is the same on all three axes, which
-turns a plant upside down through its base, and at the places checked nothing stands where one is listed while the plants around
-it with a positive scale do. Open the others with `ATTACH`:
+Every row carries `in_ep1` and `in_base`: 1 when it is part of that edition's world. A row both editions hold exactly is
+stored once, with both set; a row that differs in any column is stored once per edition, with one set. On 2.5, 9.9 million of
+the base edition's 11.5 million placements are shared rows.
+
+The views give the ep1 world under the plain names, `placements`, `plant_placements` and `refs`, and the base world under
+`base_placements`, `base_plant_placements` and `base_refs`. A query on a table, rather than a view, filters on the flag:
 
 ```sql
-ATTACH 'full.db' AS full;
-ATTACH 'foliage.db' AS foliage;
+SELECT count(*) FROM loot WHERE in_ep1 = 1;
 ```
+
+What Phantom Liberty changes is the rows with one flag set: `in_ep1 = 1 AND in_base = 0` is what its world has and the base
+world does not, and `in_base = 1 AND in_ep1 = 0` the reverse. A node renumbered by its sector's Phantom Liberty copy shows in
+both, once under each number; the diff's `same` pairs match them by position.
+
+It holds the sectors' placements, references and outlines (this section), the plants of every foliage node
+([Plants](#plants)), every collision actor ([Collision actors](#collision-actors)), and the world's files other than sectors
+([World files](#world-files)). Any SQLite client opens it: `sqlite3`, DB Browser for SQLite, Python's `sqlite3` module.
+Every value is stored as the game stores it, in metres and degrees, with no encoding to undo.
+
+`nodes.visual` splits the placements in two: 0 for entities, devices, smart objects, AI spots, markers, triggers and
+areas, community and crowd data, and every other node that is not visual or physical; 1 for meshes, decals, lights,
+foliage nodes, water, collision and the like.
 
 ## Tables
 
 ### `meta`
 
-`key`, `value`: `game_version`, `edition` (`ep1` or `base`), `schema_version`, `built_utc`, `build_commit`, `sectors_read`, `sectors_listed`,
-`database` (`core`, `full` or `foliage`), `audit` (JSON: what the read could not carry through, summed over the
-world; every count is 0 in a clean build, including `collisionUnread`), `nodes_no_row_places` (JSON: count per class), `read_errors` (JSON: per
-sector, each field stored with an older type than the reader expects, and each value the reader could not carry).
+`key`, `value`: `game_version`, `schema_version`, `built_utc`, `build_commit`, `merge_counts` (JSON: rows per table and how many
+both editions share), and each edition's own build record under `ep1_` and `base_`: `<edition>_built_utc`,
+`<edition>_build_commit`, `<edition>_sectors_read`, `<edition>_sectors_listed`, `<edition>_audit` (JSON: what the read could
+not carry through, summed over the world; every count is 0 in a clean build, including `collisionUnread`),
+`<edition>_nodes_no_row_places` (JSON: count per class), `<edition>_read_errors` (JSON: per sector, each field stored with an
+older type than the reader expects, with what was kept), `<edition>_world_built_utc`, `<edition>_world_build_commit`,
+`<edition>_world_counts` (JSON) and `<edition>_world_read_errors` (JSON: world files that could not be read; empty in a clean
+build). On 2.5, `<edition>_noderefs_corrected` and `<edition>_noderefs_left` (`node_refs` rows) and
+`<edition>_community_noderefs_corrected` and `<edition>_community_noderefs_left` (`community_periods` values).
 
 ### `strings`
 
 `id`, `text`. Every path, class name, appearance and debug name is stored once here; a column ending in `_id`
-holds its `id`. Each database has its own `strings`, so ids do not match between databases.
+holds its `id`. Ids do not match between versions: compare by text.
 
 ### `sectors`
 
-One row per streaming sector that has a placement in this database. Every `.streamingsector` in the game's
-archives is read: the three worlds' streaming blocks list all but a few, and those few are kept with `block` NULL.
+One row per streaming sector path, in either edition: `id`, `path_id` (the `.streamingsector` path) and `world`, the world it
+belongs to: `03_night_city` or `04_main_menu`, the main menu's backdrop, whose positions are not Night City's. Every
+`.streamingsector` in the game's archives is read: the three worlds' streaming blocks list all but a few, and those few are
+kept with `block` NULL.
+
+### `sector_editions`
+
+How each edition streams a sector, one row per edition, or one for both when they agree. A sector is in an edition's world
+when it has a row with that edition's flag.
 
 | Column | |
 | --- | --- |
-| `id` | sector id, the same in every database of a version |
-| `path_id` | the `.streamingsector` path |
-| `world` | the world it belongs to: `03_night_city` or `04_main_menu`, the main menu's backdrop, whose positions are not Night City's |
+| `sector_id` | the sector |
 | `block` | the streaming block that lists it: `night_city`, `ep1` (Phantom Liberty) or `main_menu`; NULL for a sector no block lists, which the game never streams |
 | `category` | `Exterior`, `Interior`, `Quest`, `Navigation` or `AlwaysLoaded`; NULL when `block` is NULL |
 | `level` | streaming level |
 | `prefab_id` | a quest sector's prefab node path, which names the place and the state it belongs to |
 | `min_x` .. `max_z` | the streaming box; NULL for a quest sector, whose box is infinite |
 | `variants` | JSON `[{name, on, range}]`: the sector's optional node ranges and whether each is on by default |
+| `in_base`, `in_ep1` | which editions stream it so |
 
 ### `nodes`
 
@@ -68,7 +83,7 @@ with `position_source` `none`, so every node-data row of a sector is in the inde
 
 | Column | |
 | --- | --- |
-| `id` | placement id, unique within the database |
+| `id` | placement id |
 | `sector_id`, `node_idx`, `row_idx` | the sector, the node it places and the row's position in the sector |
 | `instance_index` | for a cooked node, the entry this row places; NULL otherwise |
 | `type_id` | the node class as stored, e.g. `worldEntityNode`, `worldCookedStaticMeshNode` |
@@ -86,6 +101,8 @@ with `position_source` `none`, so every node-data row of a sector is in the inde
 | `streaming_distance` | metres |
 | `instance_no` | the copy's number within its node-data row; NULL for anything else |
 | `position_source` | `row` (the node-data row), `instance` (the instanced node's own copy transforms) or `none` (a further row of an instanced mesh or occluder, at the origin: `x`, `y`, `z` are NULL) |
+| `visual` | 1 for a visual or physical node (mesh, decal, light, foliage node, water, collision and the like), 0 otherwise |
+| `in_base`, `in_ep1` | which editions' worlds hold this placement |
 
 An instanced mesh or occluder's own node-data row sits at the origin; its copies' real positions are what the
 `instance` rows hold. An occluder copy's rotation and scale come from its stored world matrix.
@@ -98,7 +115,8 @@ entity is this value. `gid` and `eid` values in `node_refs` use the same signed 
 
 ### `node_refs`
 
-What a node references, one row per value. A node placed by several rows lists its references once.
+What a node references, one row per value, with `in_base` and `in_ep1`. A node placed by several rows lists its
+references once. A node's index can differ between the editions' copies of a sector, so join on the flag too.
 
 | Column | |
 | --- | --- |
@@ -117,19 +135,33 @@ with `idx` `2,0,1,5` is `area.entriesData[2].phasesData[0].timePeriodsData[1].sp
 ### `outlines`
 
 `node_id` (a `nodes.id`), `height`, `points` (JSON `[[x, y, z]]`, world space, metres), `local` (the stored
-points, in the node's own space). One row per placement of a trigger, area or other outlined node.
+points, in the node's own space). One row per placement of a trigger, area or other outlined node; it belongs to its
+placement's editions.
 
 ### `nodes_rtree`, `sectors_rtree`
 
-SQLite R*Tree indexes on x and y. `nodes_rtree` covers each placement and is in `core.db` only. `sectors_rtree`
-is the box around each sector's placements, in every database; in `full.db` and `foliage.db` it is the way to find
-placements near a point.
+SQLite R*Tree indexes on x and y. `nodes_rtree` covers each placement with `visual` 0, in both editions. `sectors_rtree`
+is the box around everything a sector has in either edition: placements, plants and collision actors. For a visual placement, a plant or an actor, it is the
+way to find what is near a point: the sectors near it, then their rows by `sector_id`.
+
+### `plants`
+
+One row per plant of each foliage node; the node itself is a row of `nodes`. `id`, `sector_id`, `node_idx`, `row_idx`
+(the foliage node's), `plant_no` (the plant's number within the node), `x`, `y`, `z`, `yaw`, `qi`, `qj`, `qk`, `qr`, `sx`,
+`sy`, `sz`, `resource_id` (the plant's mesh), `appearance_id`, `variant`, `in_base`, `in_ep1`.
+
+Plant scale is stored as the file has it: on 2.5, 22,426 plants have a negative scale. Measured by their mesh's bounding
+box, 16,041 are under 1 cm across, 21,819 under 5 cm and all but one under 50 cm. The game keeps them: a loaded foliage node
+counts every plant the file holds, negative ones included, and numbers them as `plant_no` does. None shows above ground: a
+negative scale is the same on all three axes, which turns a plant upside down through its base, and at the places checked
+nothing stands where one is listed while the plants around it with a positive scale do.
 
 ## Views
 
-`placements` is `nodes` with the text joined in: `sector`, `type`, `entry_type`, `resource`, `appearance`,
-`template`, `entity_appearance`, `debug_name`, and every other column as stored. `refs` is `node_refs` with
-`sector`, `path` and `value` as text.
+`placements` is the ep1 world's `nodes` with the text joined in: `sector`, `type`, `entry_type`, `resource`, `appearance`,
+`template`, `entity_appearance`, `debug_name`, and every other column as stored. `plant_placements` is its `plants` with
+`sector`, `resource` and `appearance` as text. `refs` is its `node_refs` with `sector`, `path` and `value` as text.
+`base_placements`, `base_plant_placements` and `base_refs` are the same for the base world.
 
 ## Example queries
 
@@ -159,14 +191,14 @@ ORDER BY (x + 1000) * (x + 1000) + (y - 2500) * (y - 2500)
 LIMIT 3;
 ```
 
-Where a mesh is placed (`full.db`). Look the path up in `strings` first: matching on the view's text column
-reads every placement.
+Where a mesh is placed. Look the path up in `strings` first: matching on the view's text column reads every
+placement.
 
 ```sql
 SELECT p.sector, p.x, p.y, p.z
-FROM full.placements p
-WHERE p.id IN (SELECT n.id FROM full.nodes n
-               WHERE n.resource_id = (SELECT id FROM full.strings
+FROM placements p
+WHERE p.id IN (SELECT n.id FROM nodes n
+               WHERE n.resource_id = (SELECT id FROM strings
                                       WHERE text LIKE '%traffic_light_s_d_t_3_mproxy.mesh'));
 ```
 
@@ -187,51 +219,48 @@ FROM spots s JOIN placements p ON p.global_id = s.spot
 ORDER BY s.entry;
 ```
 
-What is within 50 m of a point in `full.db`:
+The visual placements within 50 m of a point, by class:
 
 ```sql
 SELECT coalesce(entry_type, type) AS kind, count(*)
-FROM full.placements
-WHERE sector IN (SELECT sp.text FROM full.sectors_rtree t
-                 JOIN full.sectors s ON s.id = t.id JOIN full.strings sp ON sp.id = s.path_id
-                 WHERE t.min_x < -1000 AND t.max_x > -1000 AND t.min_y < 2500 AND t.max_y > 2500)
-  AND abs(x + 1000) < 50 AND abs(y - 2500) < 50
+FROM placements
+WHERE id IN (SELECT id FROM nodes
+             WHERE visual = 1
+               AND sector_id IN (SELECT id FROM sectors_rtree
+                                 WHERE min_x < -1000 AND max_x > -1000 AND min_y < 2500 AND max_y > 2500)
+               AND abs(x + 1000) < 50 AND abs(y - 2500) < 50)
 GROUP BY kind ORDER BY 2 DESC;
 ```
 
-The plants within 50 m of a point (`foliage.db`):
+The plants within 50 m of a point:
 
 ```sql
-SELECT p.resource, p.x, p.y, p.z, p.instance_no
-FROM foliage.placements p
-WHERE p.sector IN (SELECT sp.text FROM foliage.sectors_rtree t
-                   JOIN foliage.sectors s ON s.id = t.id JOIN foliage.strings sp ON sp.id = s.path_id
-                   WHERE t.min_x < -1000 AND t.max_x > -1000 AND t.min_y < 2500 AND t.max_y > 2500)
-  AND abs(p.x + 1000) < 50 AND abs(p.y - 2500) < 50;
+SELECT p.resource, p.x, p.y, p.z, p.plant_no
+FROM plant_placements p
+WHERE p.id IN (SELECT id FROM plants
+               WHERE sector_id IN (SELECT id FROM sectors_rtree
+                                   WHERE min_x < -1000 AND max_x > -1000 AND min_y < 2500 AND max_y > 2500)
+                 AND abs(x + 1000) < 50 AND abs(y - 2500) < 50);
 ```
 
 How many plants of one mesh there are:
 
 ```sql
 SELECT count(*)
-FROM foliage.nodes
-WHERE resource_id = (SELECT id FROM foliage.strings WHERE text LIKE '%atriplex_low.mesh');
+FROM plants
+WHERE resource_id = (SELECT id FROM strings WHERE text LIKE '%atriplex_low.mesh');
 ```
 
 ## Collision actors
 
-`collisions.db` holds one row per actor of each collision and foliage destruction node. An actor belongs to its node, or on
-2.5 to its entry, and is listed once, under the first row that places it.
-
-`actors`: `sector_id`, `node_idx`, `row_idx` (join these to `nodes`), `instance_index` (2.5 cooked entry, NULL otherwise),
-`actor_no`, `x`, `y`, `z` (world space, metres), `qi`, `qj`, `qk`, `qr`, `sx`, `sy`, `sz`, `shape_count`. `sectors` is `id`, `path`
-with the same ids as the other databases. `sectors_rtree` is the box around each sector's actors.
+`collision_actors` holds one row per actor of each collision and foliage destruction node. An actor belongs to its node, or
+on 2.5 to its entry, and is listed once, under the first row that places it: `sector_id`, `node_idx`, `row_idx` (join these
+to `nodes`), `instance_index` (2.5 cooked entry, NULL otherwise), `actor_no`, `x`, `y`, `z` (world space, metres), `qi`, `qj`,
+`qk`, `qr`, `sx`, `sy`, `sz`, `shape_count`, `in_base`, `in_ep1`.
 
 ## World files
 
-### `world.db`
-
-Every table has the values as the game stores them. A column named `data` holds the rest of the element as JSON. Hashes
+Every table has the values as the game stores them, and `in_base` and `in_ep1`. A column named `data` holds the rest of the element as JSON. Hashes
 that can exceed 2^63 are stored as text in their unsigned form. `world` is `03_night_city` or `04_main_menu`.
 
 | Table | From | Holds |
@@ -256,40 +285,33 @@ that can exceed 2^63 are stored as text in their unsigned form. `world` is `03_n
 | `community_entries` | `.community` | `path`, `entry`, `crowd` (1 for a crowd entry), `name`, `character` (TweakDB record), `spawn_in_view`, `initializers` |
 | `community_periods` | `.community` | `path`, `entry`, `phase`, `period`, `phase_name`, `always_spawned`, `appearances`, `hour`, `quantity`, `is_sequence`, `markings`, `spot_node_refs`, `categories` |
 
-`meta` holds `game_version`, `edition`, `schema_version` (this database's own version), `database`, `built_utc`, `build_commit`,
-`counts` (JSON) and `read_errors` (JSON: files that could not be read; empty in a clean build).
-
 A `devices` row is not always a placed node. Most `hash` values with no `global_id` in `nodes` belong to
 `CommunityProxyPS`, which keeps a community's persistent state.
 
-### `smartobjects.db`
-
-Optional, from `.smartobjects` files. `smart_object_files` (`path`, `box`, `properties`, `transforms`, `sequences`, each JSON),
+From `.smartobjects` files: `smart_object_files` (`path`, `box`, `properties`, `transforms`, `sequences`, each JSON),
 `smart_objects` (`path`, `idx`, `class`, `data`), `smart_object_members` (`path`, `hash`, `idx`).
 
 ### Example queries
 
-Open them with `ATTACH 'world.db' AS world;`.
-
 What a container rolls, from a global id in its unsigned form:
 
 ```sql
-SELECT record FROM world.loot WHERE node_ref_hash = '10001235969088799390' ORDER BY idx;
+SELECT record FROM loot WHERE node_ref_hash = '10001235969088799390' ORDER BY idx;
 ```
 
 Mappins near a point:
 
 ```sql
-SELECT kind, journal_path_hash, x, y, z FROM world.mappins
+SELECT kind, journal_path_hash, x, y, z FROM mappins
 WHERE x BETWEEN -1100 AND -900 AND y BETWEEN 2400 AND 2600;
 ```
 
-What Phantom Liberty changed in a base game file, with both editions' `world.db` attached:
+What Phantom Liberty changed in a base game file:
 
 ```sql
 SELECT a.path, a.size, b.size, a.sha1 = b.sha1 AS identical
-FROM base.files a JOIN ep1.files b USING (path)
-WHERE a.extension = '.mappins';
+FROM files a JOIN files b ON b.path = a.path AND b.in_ep1 = 1
+WHERE a.in_base = 1 AND a.extension = '.mappins';
 ```
 
 ## What the index does not hold
@@ -297,14 +319,13 @@ WHERE a.extension = '.mappins';
 - **Most node properties.** A placement has its transform, class, mesh or template, appearance and debug name, and
   `node_refs` has the TweakDB records, resources, NodeRefs and ids a node holds. Other values, such as a light's
   colour or a trigger's settings, are in the sector files only.
-- **A collision actor's shapes.** `collisions.db` has each actor's transform and shape count; each shape's type, size,
+- **A collision actor's shapes.** `collision_actors` has each actor's transform and shape count; each shape's type, size,
   preset and materials are in the sector files only.
 - **Most node-data row fields.** Streaming reference points, node flags, streaming priority, data group and proxy
   mesh id are not columns.
 - **The names of cable destruction NodeRefs.** A cooked cable keeps its `buffer.innerNodes[].destructionHashes[]` as hashes
   only. The 2.5 `ref` value is a name the reader knew for that hash, or the hash as a number where it knew none (221 rows on
-  2.5-ep1, 220 on 2.5-base); `meta` `noderefs_left` in `full.db` counts these rows. Every other NodeRef, in every database, is
-  its file's text.
+  2.5-ep1, 220 on 2.5-base); `meta` `noderefs_left` counts these rows. Every other NodeRef is its file's text.
 - **Files listed but not decoded.** `.gidata` and `.envprobe` are baked lighting. `.geometry_cache`, `.lights`, `.cminimap`
   and the binary buffer of `.spatial_representation` have no decoder here yet. `files` has each one's path, size and hash.
 - **Files with nothing to decode.** Every `.location` and `.lane_spots` file holds an empty buffer.
@@ -321,8 +342,9 @@ WHERE a.extension = '.mappins';
 
 `diff-<old>-<new>.db` pairs every placement of one index with its counterpart in another, by version or by edition:
 `diff-2.31-ep1-2.5-ep1.db` and `diff-2.31-base-2.5-base.db` are what a patch changed, and `diff-2.5-base-2.5-ep1.db` and
-`diff-2.31-base-2.31-ep1.db` are what Phantom Liberty changes. It is built from the two indexes' `core.db` and `full.db`
-by `build/diff.py` and needs neither of them to be read. It does not read `foliage.db`: a foliage node is paired, its plants are not.
+`diff-2.31-base-2.31-ep1.db` are what Phantom Liberty changes, with each moved or renumbered node paired. It is built by
+`build/diff.py` from the two edition builds that make the version files, and needs no index to be read. A foliage node is
+paired; its plants are not.
 
 Placements are matched within each sector path on their class and their mesh or template, by position: the same
 position to 1 cm first, then the nearest remaining placement within 10 m. A cooked 2.5 entry counts as the 2.31 class
@@ -355,7 +377,6 @@ One row per pair, or per placement with no counterpart.
 | `change` | `same`, `moved` (paired, more than 1 cm apart), `added` (new version only) or `removed` (old version only) |
 | `class_id` | the class, under its 2.31 name |
 | `key_id` | the mesh, material or template the pair matched on; NULL for classes with none |
-| `old_db`, `new_db` | `core` or `full`: which database of that version holds it |
 | `old_node_idx`, `new_node_idx` | the node index in each version |
 | `old_row`, `new_row` | the node-data row in each version: what an ArchiveXL `.xl` deletion or mutation `index` names |
 | `old_instance`, `new_instance` | a cooked entry's index within its node; NULL otherwise |

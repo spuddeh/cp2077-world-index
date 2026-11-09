@@ -2,10 +2,10 @@
 
 What is placed in Night City and where: every node in every streaming sector, with its position, type,
 entity template, mesh, `globalNodeId` and the TweakDB records it references, and the world's other files, such as
-mappins, loot, devices and traffic, as SQLite databases built per game version and edition.
+mappins, loot, devices and traffic, as one SQLite database per game version.
 
-**Status:** built for game 2.31 and 2.5, each with and without Phantom Liberty, schema version 7. Every sector of all
-four is read, and each node's class and each node-data row has been compared with the game's archive bytes, with no
+**Status:** built for game 2.31 and 2.5, each with and without Phantom Liberty, schema version 8. Every sector of all
+four editions is read, and each node's class and each node-data row has been compared with the game's archive bytes, with no
 differences. Rows, resources, appearances, instanced copies and collision actors also match
 [Akiway's node exports](https://github.com/Akiway/ArchiveXL-Sector-Updater), a separate read of the same files. No database is
 released yet.
@@ -17,9 +17,10 @@ released yet.
 | `ep1` | a game with Phantom Liberty | 26,384 |
 | `base` | a game without it | 23,735 |
 
-The names are the game's own, from `worldStreamingDataGroup`. Phantom Liberty does more than add sectors: it replaces
-the base game's copy of 1,941 existing sectors with one holding a different number of placements, so a compatibility
-patch for a player without it needs the `base` index.
+The names are the game's own, from `worldStreamingDataGroup`. Phantom Liberty does more than add sectors: it ships its
+own copy of 21,603 of the base game's sectors, and 9,089 of them hold something different, so a compatibility patch for a
+player without it needs the `base` world. Each version's database holds both: every row says which edition's world it
+belongs to, and a row both editions share is stored once.
 
 ## Game truth only
 
@@ -46,22 +47,23 @@ game changed, and what each derived set needs to follow.
 
 ## Files
 
-Each edition of each game version is one set of these databases. Sizes are game 2.5 with Phantom Liberty, raw and
-under zstd level 19:
+One database per game version, `world-index.db`, with both editions. Sizes for game 2.5, raw and under zstd level 19:
 
-| File | Holds | Placements | Raw | zstd |
-| --- | --- | --- | --- | --- |
-| `core.db` | entities, devices, smart objects, AI spots, markers, triggers and areas, community spawns, and every TweakDB reference | 705,194 | 315 MB | 72 MB |
-| `full.db` | everything else: meshes, decals, lights, foliage nodes, water, sound and the rest | 12,462,383 | 2.1 GB | 457 MB |
-| `collisions.db` | optional: every actor of every collision and foliage destruction node | 8,576,699 | 905 MB | 253 MB |
-| `foliage.db` | optional: every plant of every foliage node, one row each | 10,309,405 | 1.7 GB | 524 MB |
-| `world.db` | the world's files other than sectors: mappins, areas, loot, devices, persistent state, roads, traffic, communities, and every file under a `worlds` folder | | 649 MB | 38 MB |
-| `smartobjects.db` | optional: the `.smartobjects` files | | 1.2 GB | 26 MB |
+| File | Raw | zstd |
+| --- | --- | --- |
+| `2.5/world-index.db` | 8.3 GB | 1.45 GB |
+| `2.31/world-index.db` | 8.4 GB | not yet measured |
 
-`core.db` answers most questions alone. Open the others beside it with `ATTACH` when a query needs a mesh node, a
-plant or a world file. The differences are separate databases: `diff-2.31-ep1-2.5-ep1.db` (2.2 GB, 385 MB under zstd)
-and `diff-2.31-base-2.5-base.db` for what a patch changed, `diff-2.5-base-2.5-ep1.db` (2.1 GB, 344 MB under zstd) and
-`diff-2.31-base-2.31-ep1.db` for what Phantom Liberty changes.
+Each holds every sector's placements (13.2 million in the 2.5 ep1 world: entities, devices, smart objects, AI spots,
+markers, triggers and areas, meshes, decals, lights, foliage nodes, water and the rest), every TweakDB record, resource,
+NodeRef and id a node references, trigger and area outlines, every plant of every foliage node (10.3 million), every actor
+of every collision and foliage destruction node (8.6 million), and the world's files other than sectors: mappins, areas,
+loot, devices, persistent state, roads, traffic, communities, smart objects, and every file under a `worlds` folder.
+The plain views (`placements`, `plant_placements`, `refs`) give the world a game with Phantom Liberty loads, and the
+`base_` views the world a game without it loads.
+
+The difference between the versions is a separate database: `diff-2.31-ep1-2.5-ep1.db` (2.2 GB, 385 MB under zstd)
+pairs every placement of 2.31 with its 2.5 counterpart.
 
 Any SQLite client reads them, with no other tool needed. [SCHEMA.md](SCHEMA.md) describes every table and
 column and has example queries. [What the index does not hold](SCHEMA.md#what-the-index-does-not-hold) lists what is left out.
@@ -73,33 +75,44 @@ game's archives. The first calls two host functions, `wkit.WorldIndexSector` and
 does not ship, and both call `wkit.BaseGameFile` for the `base` edition, so neither runs in stock WolvenKit. The loaded
 archives must be the game's own: the scripts stop on a sector or world file a mod archive serves.
 
+Each edition is built on its own into `out/<version>-<edition>/world-index.db`, and the two are merged into the version's
+`out/<version>/world-index.db`. For each edition (`ep1`, then `base`):
+
 ```
-python build/build.py --game 2.31 --edition ep1 --src <extract>/2.31-ep1 --out out/2.31-ep1
-python build/build.py --game 2.5 --edition ep1 --names-from out/2.31-ep1/full.db --src <extract>/2.5-ep1 --out out/2.5-ep1
+python build/build.py --game 2.5 --edition ep1 --names-from out/2.31/world-index.db --src <extract>/2.5-ep1 --out out/2.5-ep1
 python build/build_world.py --game 2.5 --edition ep1 --game-dir "<game install>" --src <extract>/2.5-ep1/world --out out/2.5-ep1
 python build/fix_noderefs.py --game-dir "<game install>" --db out/2.5-ep1
-python build/diff.py --old out/2.31-ep1 --new out/2.5-ep1 --out out
-python build/diff.py --old out/2.5-base --new out/2.5-ep1 --out out
 ```
 
-`build.py` and `diff.py` take about 3 minutes each and `build_world.py` about 25 seconds. `build.py` writes `foliage.db`
-only when the extract has `foliage-*.ndjson` files. `--names-from` names the appearance hashes a 2.5 cooked entry keeps.
-`fix_noderefs.py` runs on every 2.5 build, after `build.py` and `build_world.py`, and takes about 15 seconds: the 2.5 extract
-can print a NodeRef in another spelling of the same hash, and it sets each one to the text its file stores. It edits the
-databases in place, a second run changes nothing, and `meta` keeps `noderefs_corrected` and `noderefs_left`.
+then:
+
+```
+python build/merge_editions.py --base out/2.5-base --ep1 out/2.5-ep1 --out out/2.5
+python build/diff.py --old out/2.31-ep1 --new out/2.5-ep1 --out out
+```
+
+`build.py` takes about 5 minutes, `build_world.py` about 40 seconds and `merge_editions.py` about 12 minutes. `build_world.py`
+adds its tables to the database `build.py` wrote, replacing only its own, so it can run again on its own. `--names-from`
+names the appearance hashes a 2.5 cooked entry keeps. `fix_noderefs.py` runs on every 2.5 edition, after `build.py` and
+`build_world.py`, and takes about 15 seconds: the 2.5 extract can print a NodeRef in another spelling of the same hash, and
+it sets each one to the text its file stores. It edits the database in place, a second run changes nothing, and `meta`
+keeps `noderefs_corrected` and `noderefs_left`. `diff.py` reads the edition builds, which can also pair the two editions of
+one version (`--old out/2.5-base --new out/2.5-ep1`).
 
 `verify/raw_check.py` reads every sector straight from the game's `.archive` files, with no WolvenKit code, and compares
 every node class and node-data row with an extract. `verify/world_check.py` does the same for every world file: it reads each
 CR2W property by its own name and type, and the custom data of loot, devices, lanes, persistent state and compiled smart objects
 by their layouts; on a 2.5 extract it reports the community NodeRefs in another spelling (193 on ep1, 192 on base) and exits 1,
-while its `--db` check of `world.db` passes once `fix_noderefs.py` has run. `verify/noderef_check.py` looks for each sector
+while its `--db` check of the edition's `world-index.db` passes once `fix_noderefs.py` has run. `verify/noderef_check.py` looks for each sector
 NodeRef's text in its own sector; after `fix_noderefs.py` only the cable destruction hashes are left. Each needs only Python and the
-game, and takes one to two minutes:
+game, and takes one to two minutes. `verify/editions_check.py` reads each edition back out of a version's database and
+compares it row for row with that edition's build, in about 15 minutes:
 
 ```
 python verify/raw_check.py --game-dir "<game install>" --src <extract>/2.5-base --edition base
-python verify/world_check.py --game-dir "<game install>" --src <extract>/2.5-base/world --edition base --db out/2.5-base/world.db
+python verify/world_check.py --game-dir "<game install>" --src <extract>/2.5-base/world --edition base --db out/2.5-base/world-index.db
 python verify/noderef_check.py --game-dir "<game install>" --db out/2.5-base --edition base
+python verify/editions_check.py --version out/2.5 --base out/2.5-base --ep1 out/2.5-ep1
 ```
 
 ## What this contains, and whose it is
