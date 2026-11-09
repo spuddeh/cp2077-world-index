@@ -62,8 +62,9 @@ loot, devices, persistent state, roads, traffic, communities, smart objects, and
 The plain views (`placements`, `plant_placements`, `refs`) give the world a game with Phantom Liberty loads, and the
 `base_` views the world a game without it loads.
 
-The difference between the versions is a separate database: `diff-2.31-ep1-2.5-ep1.db` (2.2 GB, 385 MB under zstd)
-pairs every placement of 2.31 with its 2.5 counterpart.
+The difference between the versions is a separate database: `diff-2.31-ep1-2.5-ep1.db` (2.0 GB) pairs every placement
+of 2.31 with its 2.5 counterpart. What Phantom Liberty changes is in each version's database: rows with only one of the two
+edition flags set. `build/diff.py` also pairs those, matching a renumbered or moved node across the editions.
 
 Any SQLite client reads them, with no other tool needed. [SCHEMA.md](SCHEMA.md) describes every table and
 column and has example queries. [What the index does not hold](SCHEMA.md#what-the-index-does-not-hold) lists what is left out.
@@ -75,8 +76,17 @@ game's archives. The first calls two host functions, `wkit.WorldIndexSector` and
 does not ship, and both call `wkit.BaseGameFile` for the `base` edition, so neither runs in stock WolvenKit. The loaded
 archives must be the game's own: the scripts stop on a sector or world file a mod archive serves.
 
-Each edition is built on its own into `out/<version>-<edition>/world-index.db`, and the two are merged into the version's
-`out/<version>/world-index.db`. For each edition (`ep1`, then `base`):
+One command builds every database from the extracts:
+
+```
+python build/build_all.py --extract <extract> --game-dir 2.31="<2.31 install>" --game-dir 2.5="<2.5 install>" [--check]
+```
+
+It builds 2.31, then 2.5, then the diff between them, about an hour, and stops at the first step that fails. `--check` reads
+each edition back out of its version's database and compares it with the edition's build. The steps it runs, for one
+version: each edition is built on its own into `out/<version>-<edition>/world-index.db`, and the two are merged into the
+version's `out/<version>/world-index.db`; the edition builds are then deleted unless `--keep-editions`. For each edition
+(`ep1`, then `base`):
 
 ```
 python build/build.py --game 2.5 --edition ep1 --names-from out/2.31/world-index.db --src <extract>/2.5-ep1 --out out/2.5-ep1
@@ -88,7 +98,7 @@ then:
 
 ```
 python build/merge_editions.py --base out/2.5-base --ep1 out/2.5-ep1 --out out/2.5
-python build/diff.py --old out/2.31-ep1 --new out/2.5-ep1 --out out
+python build/diff.py --old out/2.31 --new out/2.5 --out out
 ```
 
 `build.py` takes about 5 minutes, `build_world.py` about 40 seconds and `merge_editions.py` about 12 minutes. `build_world.py`
@@ -96,8 +106,9 @@ adds its tables to the database `build.py` wrote, replacing only its own, so it 
 names the appearance hashes a 2.5 cooked entry keeps. `fix_noderefs.py` runs on every 2.5 edition, after `build.py` and
 `build_world.py`, and takes about 15 seconds: the 2.5 extract can print a NodeRef in another spelling of the same hash, and
 it sets each one to the text its file stores. It edits the database in place, a second run changes nothing, and `meta`
-keeps `noderefs_corrected` and `noderefs_left`. `diff.py` reads the edition builds, which can also pair the two editions of
-one version (`--old out/2.5-base --new out/2.5-ep1`).
+keeps `noderefs_corrected` and `noderefs_left`. `diff.py` reads the version databases, the ep1 world of each unless
+`--old-edition` or `--new-edition` says `base`, so it also pairs one version's two editions
+(`--old out/2.5 --old-edition base --new out/2.5`).
 
 `verify/raw_check.py` reads every sector straight from the game's `.archive` files, with no WolvenKit code, and compares
 every node class and node-data row with an extract. `verify/world_check.py` does the same for every world file: it reads each

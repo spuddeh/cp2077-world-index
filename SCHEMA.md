@@ -340,10 +340,10 @@ WHERE a.in_base = 1 AND a.extension = '.mappins';
 
 # The diff between two versions
 
-`diff-<old>-<new>.db` pairs every placement of one index with its counterpart in another, by version or by edition:
-`diff-2.31-ep1-2.5-ep1.db` and `diff-2.31-base-2.5-base.db` are what a patch changed, and `diff-2.5-base-2.5-ep1.db` and
-`diff-2.31-base-2.31-ep1.db` are what Phantom Liberty changes, with each moved or renumbered node paired. It is built by
-`build/diff.py` from the two edition builds that make the version files, and needs no index to be read. A foliage node is
+`diff-<old>-<new>.db` pairs every placement of one world with its counterpart in another: `diff-2.31-ep1-2.5-ep1.db` is
+what the 2.5 patch changed. `build/diff.py` reads two version databases, an edition of each, so it also builds
+`diff-2.31-base-2.5-base.db` and, from one version's two editions, `diff-2.5-base-2.5-ep1.db`: what Phantom Liberty changes,
+with each moved or renumbered node paired. A diff needs no index to be read. A foliage node is
 paired; its plants are not.
 
 Placements are matched within each sector path on their class and their mesh or template, by position: the same

@@ -1,6 +1,10 @@
-"""The differences between two game versions' world indexes, as diff-<a>-<b>.db.
+"""The differences between two world indexes, as diff-<a>-<b>.db: two game versions, or one version's two editions.
 
-    python build/diff.py --old out/2.31-ep1 --new out/2.5-ep1 --out out
+    python build/diff.py --old out/2.31 --new out/2.5 --out out                       # diff-2.31-ep1-2.5-ep1.db
+    python build/diff.py --old out/2.5 --old-edition base --new out/2.5 --out out     # diff-2.5-base-2.5-ep1.db
+
+Each side is a folder holding a world-index.db: a version's, read for the edition named (ep1 unless --old-edition or
+--new-edition says base), or one edition's build, read whole.
 
 Placements are matched within each sector path on (class, mesh or template). A cooked 2.5 entry counts as the
 2.31 class it stands for, so a 2.31 worldStaticMeshNode meets the 2.5 entry that replaced it. Node indexes are not
@@ -70,19 +74,29 @@ FROM nodes n
 JOIN sectors sc ON sc.id = n.sector_id JOIN strings sp ON sp.id = sc.path_id
 LEFT JOIN strings t ON t.id = n.type_id LEFT JOIN strings et ON et.id = n.entry_type_id
 LEFT JOIN strings r ON r.id = n.resource_id LEFT JOIN strings tp ON tp.id = n.template_id
-ORDER BY 1
+{where}
+ORDER BY 1, n.row_idx, n.instance_no
 """
 
 
-def read(folder):
-    """The index's meta, and its sectors one at a time in path order: (path, {(class, key): [placement]})
-    with each placement (node_idx, row, instance_index, instance_no, global_id, x, y, z). One sector in memory at a time."""
+def read(folder, edition):
+    """The index's game version and edition, and its sectors one at a time in path order: (path, {(class, key): [placement]})
+    with each placement (node_idx, row, instance_index, instance_no, global_id, x, y, z), in row order. One sector in memory
+    at a time."""
     c = sqlite3.connect(f"file:{os.path.join(folder, 'world-index.db')}?immutable=1", uri=True)
     meta = dict(c.execute("SELECT key, value FROM meta"))
+    if "edition" in meta:   # one edition's build
+        where = ""
+    else:                   # a version's file: both editions, each row flagged
+        if edition not in ("ep1", "base"):
+            raise SystemExit(f"edition must be ep1 or base, not {edition}")
+        where = f"WHERE n.in_{edition} = 1"
+        meta = {"game_version": meta["game_version"], "edition": edition, "build_commit": meta.get("build_commit", "")}
+    query = READ.format(where=where)
 
     def sectors():
         current, groups = None, defaultdict(list)
-        for path, cls, key, idx, row, inst, no, gid, x, y, z in c.execute(READ):
+        for path, cls, key, idx, row, inst, no, gid, x, y, z in c.execute(query):
             if path != current:
                 if current is not None:
                     yield current, groups
@@ -150,10 +164,12 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--old", required=True)
     ap.add_argument("--new", required=True)
+    ap.add_argument("--old-edition", default="ep1")
+    ap.add_argument("--new-edition", default="ep1")
     ap.add_argument("--out", required=True)
     a = ap.parse_args()
-    old_meta, old = read(a.old)
-    new_meta, new = read(a.new)
+    old_meta, old = read(a.old, a.old_edition)
+    new_meta, new = read(a.new, a.new_edition)
     os.makedirs(a.out, exist_ok=True)
     label = lambda m: m["game_version"] + "-" + m["edition"]
     name = f"diff-{label(old_meta)}-{label(new_meta)}.db"
