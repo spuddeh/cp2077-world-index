@@ -15,9 +15,10 @@ import math
 import os
 import re
 import sqlite3
-import subprocess
 
-SCHEMA_VERSION = 8
+from stamp import git_commit
+
+SCHEMA_VERSION = 9
 BACKSLASH = chr(92)
 ARRAY_INDEX = re.compile(r"\[(\d+)\]")
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -103,17 +104,6 @@ def variant_of(row, starts):
         if row >= start:
             k = i
     return k
-
-
-def git_commit():
-    """HEAD of this repo, with -dirty when build/ or extract/ has uncommitted changes."""
-    try:
-        head = subprocess.check_output(["git", "-C", HERE, "rev-parse", "--short", "HEAD"], text=True).strip()
-        dirty = subprocess.check_output(["git", "-C", HERE, "status", "--porcelain", "--", "../build", "../extract"],
-                                        text=True).strip()
-        return head + ("-dirty" if dirty else "")
-    except (OSError, subprocess.CalledProcessError):
-        return None
 
 
 def main():
@@ -239,7 +229,7 @@ def main():
     meta = {"game_version": a.game, "edition": a.edition, "schema_version": str(SCHEMA_VERSION), "audit": json.dumps(audit),
             "nodes_no_row_places": json.dumps(unplaced, sort_keys=True), "read_errors": json.dumps(read_errors),
             "built_utc": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-            "build_commit": git_commit() or "", "sectors_read": str(len(read)),
+            "build_commit": git_commit(), "sectors_read": str(len(read)),
             "sectors_listed": str(len(descriptors))}
     known = {}
     for other in a.names_from:

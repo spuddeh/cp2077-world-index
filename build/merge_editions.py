@@ -13,8 +13,9 @@ import datetime
 import json
 import os
 import sqlite3
-import subprocess
 import time
+
+from stamp import git_commit
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 EDITIONS = ("base", "ep1")
@@ -66,13 +67,6 @@ def walk(con, sql):
             rb = b.fetchone()
 
 
-def git_commit():
-    try:
-        return subprocess.check_output(["git", "-C", HERE, "rev-parse", "--short", "HEAD"], text=True).strip()
-    except (OSError, subprocess.CalledProcessError):
-        return ""
-
-
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--base", required=True, help="the base edition's folder, holding its world-index.db")
@@ -92,6 +86,7 @@ def main():
         c.execute(f"ATTACH 'file:{source}?immutable=1' AS {ed}")
     metas = {ed: dict(c.execute(f"SELECT key, value FROM {ed}.meta")) for ed in EDITIONS}
     game = metas["ep1"]["game_version"]
+    commit = git_commit()
     if metas["base"]["game_version"] != game or metas["base"]["edition"] != "base" or metas["ep1"]["edition"] != "ep1":
         raise SystemExit(f"--base and --ep1 must be the base and ep1 builds of one game version: {metas['base'].get('game_version')} "
                          f"{metas['base'].get('edition')}, {game} {metas['ep1'].get('edition')}")
@@ -100,7 +95,9 @@ def main():
     world_tables = [r[0] for r in c.execute("SELECT name FROM ep1.sqlite_master WHERE type = 'table'")
                     if r[0] not in SECTOR_TABLES and "rtree" not in r[0]]
     for table in world_tables:
-        cols = [r[1] for r in c.execute(f"PRAGMA ep1.table_info({table})")]
+        # Each column keeps its declared type. A primary key does not carry over: a row that differs between the editions
+        # is stored once per edition.
+        cols = [f"{r[1]} {r[2]}".strip() for r in c.execute(f"PRAGMA ep1.table_info({table})")]
         c.execute(f"CREATE TABLE {table} ({', '.join(cols)}, in_base INTEGER, in_ep1 INTEGER)")
     # The world tables keep the indexes build_world.py gives them.
     world_indexes = [sql for (sql,) in c.execute(
@@ -184,7 +181,7 @@ def main():
     c.executemany("INSERT INTO strings VALUES (?,?)", ((i, t) for t, i in strings.items()))
     meta = {"game_version": game, "schema_version": metas["ep1"]["schema_version"],
             "built_utc": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-            "build_commit": git_commit(), "merge_counts": json.dumps(counts)}
+            "build_commit": commit, "merge_counts": json.dumps(counts)}
     for ed in EDITIONS:
         for k, v in metas[ed].items():
             if k not in ("game_version", "edition", "schema_version"):
@@ -203,7 +200,9 @@ def main():
         c.executescript(f.read())
     for sql in world_indexes:
         c.execute(sql)
+    c.execute(f"PRAGMA user_version = {int(meta['schema_version'])}")
     c.commit()
+    c.execute("ANALYZE")   # the statistics the query planner picks an index by
     c.execute("VACUUM")
     c.close()
     print(f"world-index.db: {os.path.getsize(path) / 1e6:,.0f} MB, {round(time.time() - started)} s")

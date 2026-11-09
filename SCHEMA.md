@@ -45,6 +45,8 @@ older type than the reader expects, with what was kept), `<edition>_world_built_
 build). On 2.5, `<edition>_noderefs_corrected` and `<edition>_noderefs_left` (`node_refs` rows) and
 `<edition>_community_noderefs_corrected` and `<edition>_community_noderefs_left` (`community_periods` values).
 
+`PRAGMA user_version` is the schema version as a number, readable without a query on `meta`.
+
 ### `strings`
 
 `id`, `text`. Every path, class name, appearance and debug name is stored once here; a column ending in `_id`
@@ -112,6 +114,10 @@ To look one up from its unsigned form, subtract 2^64 when it is 2^63 or more; do
 SQLite, which turns a literal above 2^63 into a rounded real. A CET `entEntityID.hash` for a static world
 entity is this value. `gid` and `eid` values in `node_refs` use the same signed form, so
 `CAST(value AS INTEGER) = global_id` joins them.
+
+A `global_id` can be on more than one row of an edition: every copy of an instanced node carries its node's, and on 2.5
+`ep1` 49 ids sit on more than one node-data row. `nodes.id` and `plants.id` number the rows of one build; another build
+of the same game can number them differently, so keep a `global_id` or a sector, row and instance, not an `id`.
 
 ### `node_refs`
 
@@ -263,6 +269,12 @@ to `nodes`), `instance_index` (2.5 cooked entry, NULL otherwise), `actor_no`, `x
 Every table has the values as the game stores them, and `in_base` and `in_ep1`. A column named `data` holds the rest of the element as JSON. Hashes
 that can exceed 2^63 are stored as text in their unsigned form. `world` is `03_night_city` or `04_main_menu`.
 
+Each of those id columns has a second column, `<column>_signed`, with the same value as a signed 64-bit integer, the form
+`nodes.global_id` has, so the two join in SQL: `poi_mappins.entity_id_signed`, `areas.entity_id_signed`,
+`loot.node_ref_hash_signed`, `devices.hash_signed`, `persistent_states.cruid_signed`, `roads.global_id_signed`,
+`traffic_lanes.node_ref_hash_signed`, `null_area_collisions.area_id_signed` and `smart_object_members.hash_signed`. Each is
+indexed. `CAST` does not convert the text form: SQLite turns a number above 2^63 into 2^63 - 1.
+
 | Table | From | Holds |
 | --- | --- | --- |
 | `files` | the `.archive` indexes | every file under a `worlds` folder and every `.community` file: `path`, `extension`, `archive`, `size`, `disk_size`, `sha1`, `in_tables` (1 when its contents are in these databases) |
@@ -297,6 +309,14 @@ What a container rolls, from a global id in its unsigned form:
 
 ```sql
 SELECT record FROM loot WHERE node_ref_hash = '10001235969088799390' ORDER BY idx;
+```
+
+Where the containers that roll a record stand:
+
+```sql
+SELECT p.template, p.x, p.y, p.z
+FROM loot l JOIN placements p ON p.global_id = l.node_ref_hash_signed
+WHERE l.record = 'Loot.BadlandsClothing' AND l.in_ep1 = 1;
 ```
 
 Mappins near a point:
@@ -343,7 +363,7 @@ WHERE a.in_base = 1 AND a.extension = '.mappins';
 `diff-<old>-<new>.db` pairs every placement of one world with its counterpart in another: `diff-2.31-ep1-2.5-ep1.db` is
 what the 2.5 patch changed. `build/diff.py` reads two version databases, an edition of each, so it also builds
 `diff-2.31-base-2.5-base.db` and, from one version's two editions, `diff-2.5-base-2.5-ep1.db`: what Phantom Liberty changes,
-with each moved or renumbered node paired. A diff needs no index to be read. A foliage node is
+with each moved or renumbered node paired. A diff is read on its own, with no version database beside it. A foliage node is
 paired; its plants are not.
 
 Placements are matched within each sector path on their class and their mesh or template, by position: the same

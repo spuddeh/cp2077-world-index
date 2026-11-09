@@ -24,8 +24,9 @@ import os
 import re
 import sqlite3
 import struct
-import subprocess
 import zlib
+
+from stamp import git_commit
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 
@@ -84,6 +85,11 @@ CREATE TABLE smart_object_members (path TEXT, hash TEXT, idx INTEGER);
 CREATE INDEX smart_objects_path ON smart_objects (path);
 CREATE INDEX smart_members_hash ON smart_object_members (hash);
 """
+# Each id the files store as an unsigned 64-bit number is kept as text, and again as <column>_signed: the same value as
+# a signed 64-bit integer, the form nodes.global_id has, so the two join.
+SIGNED = (("poi_mappins", "entity_id"), ("areas", "entity_id"), ("loot", "node_ref_hash"), ("devices", "hash"),
+          ("persistent_states", "cruid"), ("roads", "global_id"), ("traffic_lanes", "node_ref_hash"),
+          ("null_area_collisions", "area_id"), ("smart_object_members", "hash"))
 TABLED = {".mappins", ".poimappins", ".areas", ".loot", ".devices", ".psrep", ".locopaths", ".streamingquerydata", ".traffic_persistent",
           ".lane_polygons", ".lane_connections", ".traffic_collisions", ".null_areas", ".streamingworld", ".streamingsector_inplace",
           ".cookedprefab", ".acousticdata", ".smartobjects", ".streamingsector", ".streamingblock", ".spatial_representation", ".community"}
@@ -95,6 +101,13 @@ def fnv(text):
         h ^= b
         h = (h * 0x100000001b3) & 0xffffffffffffffff
     return h
+
+
+def signed64(text):
+    if text is None:
+        return None
+    v = int(text)
+    return v - (1 << 64) if v >= (1 << 63) else v
 
 
 def archive_index(game_dir, edition):
@@ -334,16 +347,16 @@ def main():
     for f in glob.glob(os.path.join(src, "errors-*.json")):
         with open(f, encoding="utf-8") as h:
             errors += json.load(h)
-    commit = ""
-    try:
-        commit = subprocess.check_output(["git", "rev-parse", "--short", "HEAD"], cwd=HERE, text=True, stderr=subprocess.DEVNULL).strip()
-    except (OSError, subprocess.CalledProcessError):
-        pass
+    c.create_function("signed64", 1, signed64, deterministic=True)
+    for table, column in SIGNED:
+        c.execute(f"ALTER TABLE {table} ADD COLUMN {column}_signed INTEGER")
+        c.execute(f"UPDATE {table} SET {column}_signed = signed64({column})")
+        c.execute(f"CREATE INDEX {table}_{column}_signed ON {table} ({column}_signed)")
     have = dict(c.execute("SELECT key, value FROM meta WHERE key IN ('game_version', 'edition')"))
     if have != {"game_version": a.game, "edition": a.edition}:
         raise SystemExit(f"{path} is the build of {have}, not {a.game} {a.edition}")
     meta = {"world_built_utc": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-            "world_build_commit": commit, "world_counts": json.dumps(counts, sort_keys=True), "world_read_errors": json.dumps(errors)}
+            "world_build_commit": git_commit(), "world_counts": json.dumps(counts, sort_keys=True), "world_read_errors": json.dumps(errors)}
     c.executemany("INSERT INTO meta VALUES (?,?)", list(meta.items()))
     c.executescript(INDEXES)
     c.commit()

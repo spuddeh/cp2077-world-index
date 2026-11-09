@@ -4,7 +4,7 @@ What is placed in Night City and where: every node in every streaming sector, wi
 entity template, mesh, `globalNodeId` and the TweakDB records it references, and the world's other files, such as
 mappins, loot, devices and traffic, as one SQLite database per game version.
 
-**Status:** built for game 2.31 and 2.5, each with and without Phantom Liberty, schema version 8. Every sector of all
+**Status:** built for game 2.31 and 2.5, each with and without Phantom Liberty, schema version 9. Every sector of all
 four editions is read, and each node's class and each node-data row has been compared with the game's archive bytes, with no
 differences. Rows, resources, appearances, instanced copies and collision actors also match
 [Akiway's node exports](https://github.com/Akiway/ArchiveXL-Sector-Updater), a separate read of the same files. No database is

@@ -61,6 +61,7 @@ LEFT JOIN strings c ON c.id = p.class_id LEFT JOIN strings k ON k.id = p.key_id;
 
 INDEXES = """
 CREATE UNIQUE INDEX strings_text ON strings (text);
+CREATE UNIQUE INDEX sectors_path ON sectors (path_id);
 CREATE INDEX placements_sector ON placements (sector_id, change);
 CREATE INDEX placements_change ON placements (change);
 CREATE INDEX placements_old ON placements (sector_id, old_node_idx) WHERE old_node_idx IS NOT NULL;
@@ -223,6 +224,7 @@ def main():
     con.executemany("INSERT INTO meta VALUES (?,?)", meta.items())
     con.executescript(INDEXES)
     con.commit()
+    con.execute("ANALYZE")   # the statistics the query planner picks an index by
     con.execute("VACUUM")
     con.close()
     print(f"{name}: {dict(counts)}; sectors only in {label(old_meta)}: {only_old}, "

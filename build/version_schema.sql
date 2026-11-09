@@ -2,7 +2,8 @@
 -- editions hold it; in_base and in_ep1 say which edition's world it belongs to (1 = yes). ep1 is the world a game with
 -- Phantom Liberty loads, base the world a game without it loads. The views give the ep1 world under the plain names
 -- and the base world under base_ names. merge_editions.py writes it from the two edition builds and adds the world-file
--- tables, each with in_base and in_ep1. SCHEMA.md describes each table with example queries.
+-- tables, each with in_base and in_ep1, sets PRAGMA user_version to the schema version and runs ANALYZE. SCHEMA.md
+-- describes each table with example queries.
 
 CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT);
 
