@@ -344,8 +344,9 @@ WHERE a.in_base = 1 AND a.extension = '.mappins';
 - **Most node-data row fields.** Streaming reference points, node flags, streaming priority, data group and proxy
   mesh id are not columns.
 - **The names of cable destruction NodeRefs.** A cooked cable keeps its `buffer.innerNodes[].destructionHashes[]` as hashes
-  only. The 2.5 `ref` value is a name the reader knew for that hash, or the hash as a number where it knew none (221 rows on
-  2.5-ep1, 220 on 2.5-base); `meta` `noderefs_left` counts these rows. Every other NodeRef is its file's text.
+  only. The 2.5 `ref` value is a name the reader knew for that hash, or the hash as a number where it knew none. That is
+  2,224 rows on 2.5-ep1 and 2,199 on 2.5-base, of which 221 and 220 are numbers; `meta` `ep1_noderefs_left` and
+  `base_noderefs_left` count them. Every other NodeRef is its file's text.
 - **Files listed but not decoded.** `.gidata` and `.envprobe` are baked lighting. `.geometry_cache`, `.lights`, `.cminimap`
   and the binary buffer of `.spatial_representation` have no decoder here yet. `files` has each one's path, size and hash.
 - **Files with nothing to decode.** Every `.location` and `.lane_spots` file holds an empty buffer.
@@ -361,7 +362,7 @@ WHERE a.in_base = 1 AND a.extension = '.mappins';
 # The diff between two versions
 
 `diff-<old>-<new>.db` pairs every placement of one world with its counterpart in another: `diff-2.31-ep1-2.5-ep1.db` is
-what the 2.5 patch changed. `build/diff.py` reads two version databases, an edition of each, so it also builds
+what the 2.5 patch changed, and is the one diff in the Releases. `build/diff.py` reads two version databases, an edition of each, so it also builds
 `diff-2.31-base-2.5-base.db` and, from one version's two editions, `diff-2.5-base-2.5-ep1.db`: what Phantom Liberty changes,
 with each moved or renumbered node paired. A diff is read on its own, with no version database beside it. A foliage node is
 paired; its plants are not.
@@ -377,7 +378,7 @@ nodes into one, so almost every index changed.
 ### `meta`
 
 `old_game`, `new_game`, `old_edition`, `new_edition`, `old_build`, `new_build`, `built_utc`, `move_limit_m`, and `counts` (JSON: placements
-per change).
+per change). A diff has no `schema_version` and its `user_version` is 0: the build stamps name the code that made it.
 
 ### `strings`
 

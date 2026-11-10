@@ -126,6 +126,10 @@ NodeRef's text in its own sector; after `fix_noderefs.py` only the cable destruc
 game, and takes one to two minutes. `verify/editions_check.py` reads each edition back out of a version's database and
 compares it row for row with that edition's build, in about 15 minutes:
 
+`build/package.py` makes the Release assets: each database at zstd level 19 into `out/release/`, with `SHA256SUMS`. It
+refuses a version database whose `user_version` is not the schema version, any database whose build stamps are missing or
+`-dirty`, and any asset over 2 GiB, and it decompresses each asset again to check its hash. All three take about 18 minutes.
+
 ```
 python verify/raw_check.py --game-dir "<game install>" --src <extract>/2.5-base --edition base
 python verify/world_check.py --game-dir "<game install>" --src <extract>/2.5-base/world --edition base --db out/2.5-base/world-index.db

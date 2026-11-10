@@ -11,7 +11,7 @@
 //   errors-<NN>.json     the sectors of part-<NN> that could not be read, with the reason
 //   part-extra-<NN>.ndjson, errors-extra-<NN>.json   the same, for an ONLY = "extra" run
 //   foliage-<NN>.ndjson, errors-foliage-<NN>.json      an ONLY = "foliage" run: each sector's foliage plants
-//                        (wkit.WorldIndexFoliage), one line per sector that has any, for build.py's foliage.db
+//                        (wkit.WorldIndexFoliage), one line per sector that has any, for build.py's plants table
 // A run writes the part files FROM to TO. Each file is written as soon as its sectors are read, so a run cut
 // short keeps every file it finished; run the rest by setting FROM. A whole game is 53 files: 2.5 reads all of them
 // in about 5 minutes at THREADS = 8. A 2.31 sector goes through the 2.31 helper, whose rebuild into WolvenKit 10
