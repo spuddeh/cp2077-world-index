@@ -24,10 +24,10 @@ belongs to, and a row both editions share is stored once.
 
 ## Game truth only
 
-Every row is read from the game's own sector files and nothing else. A mod that corrects or reshapes
-world data (a district outline drawn from trigger areas, a set of LOD distances) keeps its version in
-its own repository and derives it from this one. That way a patch can be checked against both: what the
-game changed, and what each derived set needs to follow.
+Every row is read from the game's own sector files and nothing else: the extract stops on a sector a mod
+archive serves. A mod that changes sectors, such as an ArchiveXL `.xl` that deletes or moves nodes, or a
+World Builder build that adds them, is not in the index. The index is the world those changes are written
+against, and after a patch the diff shows which sectors and node indexes a mod names have changed.
 
 ## What it answers
 
