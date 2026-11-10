@@ -7,8 +7,8 @@ mappins, loot, devices and traffic, as one SQLite database per game version.
 **Status:** built for game 2.31 and 2.5, each with and without Phantom Liberty, schema version 9. Every sector of all
 four editions is read, and each node's class and each node-data row has been compared with the game's archive bytes, with no
 differences. Rows, resources, appearances, instanced copies and collision actors also match
-[Akiway's node exports](https://github.com/Akiway/ArchiveXL-Sector-Updater), a separate read of the same files. No database is
-released yet.
+[Akiway's node exports](https://github.com/Akiway/ArchiveXL-Sector-Updater), a separate read of the same files. The databases are
+in the [Releases](https://github.com/spuddeh/cp2077-world-index/releases).
 
 ## Editions
 
@@ -47,12 +47,19 @@ game changed, and what each derived set needs to follow.
 
 ## Files
 
-One database per game version, `world-index.db`, with both editions. Sizes for game 2.5, raw and under zstd level 19:
+One database per game version, `world-index.db`, with both editions, and one diff between the versions. Each is a
+Release asset compressed with zstd at level 19:
 
-| File | Raw | zstd |
-| --- | --- | --- |
-| `2.5/world-index.db` | 8.3 GB | not yet measured |
-| `2.31/world-index.db` | 8.4 GB | not yet measured |
+| Release asset | Decompress to | Raw | zstd |
+| --- | --- | --- | --- |
+| `world-index-2.5.db.zst` | `2.5/world-index.db` | 8.3 GB | 1.46 GB |
+| `world-index-2.31.db.zst` | `2.31/world-index.db` | 8.4 GB | 1.50 GB |
+| `diff-2.31-ep1-2.5-ep1.db.zst` | `diff-2.31-ep1-2.5-ep1.db` | 2.0 GB | 0.38 GB |
+
+Decompress with `zstd -d world-index-2.5.db.zst -o 2.5/world-index.db`, or on Windows with
+[PeaZip](https://peazip.github.io/) or [7-Zip ZS](https://github.com/mcmilk/7-Zip-zstd). Keep the folder layout in the
+table: wolvenkit-mcp's `world_index` tool reads a folder holding `2.5/`, `2.31/` and the diff. `SHA256SUMS` in each Release
+lists the hash of every asset and of every decompressed file.
 
 Each holds every sector's placements (13.2 million in the 2.5 ep1 world: entities, devices, smart objects, AI spots,
 markers, triggers and areas, meshes, decals, lights, foliage nodes, water and the rest), every TweakDB record, resource,
