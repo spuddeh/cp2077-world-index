@@ -51,7 +51,7 @@ One database per game version, `world-index.db`, with both editions. Sizes for g
 
 | File | Raw | zstd |
 | --- | --- | --- |
-| `2.5/world-index.db` | 8.3 GB | 1.45 GB |
+| `2.5/world-index.db` | 8.3 GB | not yet measured |
 | `2.31/world-index.db` | 8.4 GB | not yet measured |
 
 Each holds every sector's placements (13.2 million in the 2.5 ep1 world: entities, devices, smart objects, AI spots,
