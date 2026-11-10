@@ -24,10 +24,7 @@ belongs to, and a row both editions share is stored once.
 
 ## Game truth only
 
-Every row is read from the game's own sector files and nothing else: the extract stops on a sector a mod
-archive serves. A mod that changes sectors, such as an ArchiveXL `.xl` that deletes or moves nodes, or a
-World Builder build that adds them, is not in the index. The index is the world those changes are written
-against, and after a patch the diff shows which sectors and node indexes a mod names have changed.
+Every row is read from the sector files of an unmodded game.
 
 ## What it answers
 
