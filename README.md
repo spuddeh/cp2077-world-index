@@ -55,7 +55,7 @@ Release asset compressed with zstd at level 19:
 
 Decompress with `zstd -d world-index-2.5.db.zst -o 2.5/world-index.db`, or on Windows with
 [PeaZip](https://peazip.github.io/) or [7-Zip ZS](https://github.com/mcmilk/7-Zip-zstd). Keep the folder layout in the
-table: cyberdeck-mcp's `world_index` tool reads a folder holding `2.5/`, `2.31/` and the diff. `SHA256SUMS` in each Release
+table: a reader expects a folder holding `2.5/`, `2.31/` and the diff. `SHA256SUMS` in each Release
 lists the hash of every asset and of every decompressed file.
 
 Each holds every sector's placements (13.2 million in the 2.5 ep1 world: entities, devices, smart objects, AI spots,
